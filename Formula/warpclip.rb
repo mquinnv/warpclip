@@ -29,7 +29,7 @@ class Warpclip < Formula
       
       # Ensure consistent port configuration
       s.gsub!(/^PORT=.*$/, 'PORT="8888"')
-      s.gsub!(/^BIND_ADDRESS=.*$/, 'BIND_ADDRESS="localhost"')
+      s.gsub!(/^BIND_ADDRESS=.*$/, 'BIND_ADDRESS="127.0.0.1"')
     end
     
     # Set the proper permissions
