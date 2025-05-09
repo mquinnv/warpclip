@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+
+# warp-copy
+# Remote script for copying content to a local clipboard via SSH tunneling
+# Part of the WarpClip project for remote clipboard integration
+# 
+# Usage: cat file.txt | warp-copy
+#    or: warp-copy < file.txt
+#    or: command | warp-copy
+
+# Configuration
+PORT=9999
+TIMEOUT=5  # Connection timeout in seconds
+VERSION="1.0.0"
+
+# Check if nc is available
+if ! command -v nc &> /dev/null; then
+    echo "Error: 'nc' (netcat) is not installed on this system." >&2
+    echo "Please install netcat to use warp-copy." >&2
+    exit 1
+fi
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --port|-p)
+            PORT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "WarpClip Remote Client v$VERSION"
+            echo "Usage: cat file.txt | warp-copy [options]"
+            echo "   or: warp-copy [options] < file.txt"
+            echo ""
+            echo "Options:"
+            echo "  --port, -p PORT    Specify custom port (default: 9999)"
+            echo "  --help, -h         Show this help message"
+            echo ""
+            echo "WarpClip copies content from the remote server to your local macOS clipboard"
+            echo "via a secure SSH tunnel. Make sure you connected with port forwarding enabled."
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            echo "Use --help to see available options" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Function to check if the SSH tunnel is properly set up
+check_tunnel() {
+    # Try to connect to localhost:PORT with a short timeout
+    if ! nc -z -w1 localhost $PORT &>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+# Function to send data to the clipboard
+send_to_clipboard() {
+    # Use timeout if available to ensure the command doesn't hang indefinitely
+    if command -v timeout &>/dev/null; then
+        timeout $TIMEOUT nc localhost $PORT
+        exit_code=$?
+        if [ $exit_code -eq 124 ]; then
+            echo "Error: Connection timed out." >&2
+            return 1
+        elif [ $exit_code -ne 0 ]; then
+            echo "Error: Failed to send data (exit code $exit_code)." >&2
+            return 1
+        fi
+    else
+        # If timeout is not available, use plain nc with its timeout option if supported
+        nc -w $TIMEOUT localhost $PORT
+        if [ $? -ne 0 ]; then
+            echo "Error: Failed to send data." >&2
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Main execution
+if ! check_tunnel; then
+    echo "Error: SSH tunnel not detected on port $PORT." >&2
+    echo "Make sure you connected with SSH using RemoteForward option:" >&2
+    echo "  ssh -R $PORT:localhost:8888 user@$(hostname)" >&2
+    echo "" >&2
+    echo "Or add to your ~/.ssh/config:" >&2
+    echo "  Host $(hostname)" >&2
+    echo "      RemoteForward $PORT localhost:8888" >&2
+    exit 1
+fi
+
+echo "Sending input to clipboard..." >&2
+if send_to_clipboard; then
+    echo "Content copied to clipboard successfully!" >&2
+    exit 0
+else
+    echo "Failed to copy content to clipboard." >&2
+    exit 1
+fi
+
