@@ -31,3 +31,6 @@ Icon
 *~
 *.tmp
 
+
+dist
+homebrew-tap
