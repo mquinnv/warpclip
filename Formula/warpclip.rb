@@ -25,10 +25,7 @@ class Warpclip < Formula
     inreplace bin/"warpclipd" do |s|
       s.gsub!(/^VERSION=.*$/, %Q(VERSION="#{version}"))
       
-      # Use simpler netcat command that works reliably on macOS
-      s.gsub!(/timeout \$CONNECTION_TIMEOUT nc.*\$PORT/, 'nc -l localhost $PORT')
-      s.gsub!(/gtimeout \$CONNECTION_TIMEOUT nc.*\$PORT/, 'nc -l localhost $PORT')
-      s.gsub!(/nc -[kl].*\$PORT/, 'nc -l localhost $PORT')
+      # Update version and binding address
       
       # Ensure consistent port configuration
       s.gsub!(/^PORT=.*$/, 'PORT="8888"')
