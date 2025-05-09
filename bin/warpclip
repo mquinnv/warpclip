@@ -9,7 +9,7 @@
 
 set -e
 
-VERSION="1.1.1"
+VERSION="1.1.3"
 
 # Configuration - can be overridden with environment variables
 PORT="${WARPCLIP_PORT:-9999}"      # Remote port (can be customized)
