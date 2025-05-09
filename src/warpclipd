@@ -1,0 +1,512 @@
+#!/usr/bin/env bash
+#
+# warpclipd - WarpClip clipboard daemon for macOS
+# 
+# Part of the WarpClip project: https://github.com/mquinnv/warpclip
+# 
+# This daemon listens on a local port and copies any received data to
+# the macOS clipboard using pbcopy. It's designed to work with the
+# warpclip client running on remote servers.
+
+# Set strict mode
+set -euo pipefail
+IFS=$'\n\t'
+
+# Security: Set umask to ensure files are created with safe permissions
+umask 077  # Owner: rwx, Group: ---, Others: ---
+
+VERSION="1.1.0"
+
+# Configuration - can be overridden with environment variables
+PORT="${WARPCLIP_LOCAL_PORT:-8888}"  # Local port to listen on
+BIND_ADDRESS="127.0.0.1"  # Security: Only bind to localhost
+LOG_FILE="${WARPCLIP_LOG_FILE:-$HOME/.warpclip.log}"
+DEBUG_FILE="${WARPCLIP_DEBUG_FILE:-$HOME/.warpclip.debug.log}"
+OUT_LOG_FILE="${WARPCLIP_OUT_LOG:-$HOME/.warpclip.out.log}"
+ERROR_LOG_FILE="${WARPCLIP_ERROR_LOG:-$HOME/.warpclip.error.log}"
+MAX_RETRIES=5
+RETRY_DELAY=3
+CONNECTION_TIMEOUT=7200  # 2 hours in seconds (refresh period)
+PID_FILE="$HOME/.warpclip.pid"
+MAX_DATA_SIZE=1048576    # Security: 1MB max size for clipboard data
+
+# ANSI colors for prettier output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# Helper functions for pretty printing
+print_header() {
+    echo -e "${BLUE}${BOLD}$1${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ $1${NC}" >&2
+}
+
+# Create log files if they don't exist with secure permissions
+ensure_log_files() {
+    for file in "$LOG_FILE" "$DEBUG_FILE" "$OUT_LOG_FILE" "$ERROR_LOG_FILE"; do
+        if [ ! -f "$file" ]; then
+            touch "$file"
+            chmod 600 "$file"  # Security: Owner: rw-, Group: ---, Others: ---
+        else
+            # Security: Fix permissions if they've been changed
+            chmod 600 "$file"
+        fi
+    done
+}
+
+# Security: Function to sanitize input for log files to prevent log injection
+sanitize_input() {
+    local input="$1"
+    # Remove non-printable and control characters except for spaces and newlines
+    echo "$input" | tr -cd '[:print:]\n\t' | sed 's/\r//g'
+}
+
+# Log levels: INFO, WARNING, ERROR, DEBUG
+log() {
+    local level="INFO"
+    if [[ $# -gt 1 ]]; then
+        level="$1"
+        shift
+    fi
+    
+    # Security: Sanitize the log message
+    local sanitized_msg=$(sanitize_input "$1")
+    
+    # Security: Check if we can write to the log file
+    if [[ ! -w "$LOG_FILE" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] Cannot write to log file: $LOG_FILE" >&2
+        return 1
+    fi
+    
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $sanitized_msg" >> "$LOG_FILE"
+    
+    # Only write DEBUG level messages to debug file
+    if [[ "$level" == "DEBUG" ]]; then
+        if [[ ! -w "$DEBUG_FILE" ]]; then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [ERROR] Cannot write to debug file: $DEBUG_FILE" >&2
+            return 1
+        fi
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $sanitized_msg" >> "$DEBUG_FILE"
+    fi
+    
+    # Write errors to stderr for launchd to capture
+    if [[ "$level" == "ERROR" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$level] $sanitized_msg" >&2
+    fi
+}
+
+# Initialize log files
+ensure_log_files
+
+# -----------------------------------------------------------------------------
+# Command functions
+# -----------------------------------------------------------------------------
+
+# Show help message
+cmd_help() {
+    cat <<EOF
+${BOLD}WarpClip Daemon v$VERSION${NC} - Local clipboard service
+
+${BOLD}USAGE:${NC}
+  ${BOLD}warpclipd${NC} [COMMAND]
+
+${BOLD}COMMANDS:${NC}
+  ${BOLD}start${NC}    Start the clipboard daemon (default if no command specified)
+  ${BOLD}stop${NC}     Stop a running daemon
+  ${BOLD}restart${NC}  Restart the daemon
+  ${BOLD}status${NC}   Check daemon status
+  ${BOLD}help${NC}     Show this help message
+  ${BOLD}version${NC}  Show version information
+
+${BOLD}ENVIRONMENT VARIABLES:${NC}
+  ${BOLD}WARPCLIP_LOCAL_PORT${NC}  Override default port (8888)
+  ${BOLD}WARPCLIP_LOG_FILE${NC}    Override log file location
+  ${BOLD}WARPCLIP_DEBUG_FILE${NC}  Override debug log file location
+
+${BOLD}EXAMPLES:${NC}
+  warpclipd start      # Start the daemon
+  warpclipd status     # Check status
+  warpclipd restart    # Restart the daemon
+
+${BOLD}NOTES:${NC}
+  This daemon listens on localhost:$PORT and copies received data to the clipboard.
+  It is designed to be used with the warpclip command on remote servers.
+  
+  When installed via Homebrew, the service is managed with:
+    brew services start warpclip
+    brew services stop warpclip
+    brew services restart warpclip
+    
+EOF
+}
+
+# Function to check status of the service
+cmd_status() {
+    if [[ -f "$PID_FILE" ]]; then
+        local stored_pid=$(cat "$PID_FILE")
+        if ps -p "$stored_pid" > /dev/null; then
+            print_header "WarpClip Service Status"
+            print_success "Service is running (PID: $stored_pid)"
+            echo "Listening on: ${BIND_ADDRESS}:${PORT}"
+            
+            # Show last clipboard activity if available
+            if [[ -f "$HOME/.warpclip.last" ]]; then
+                echo -e "\nLast clipboard activity:"
+                cat "$HOME/.warpclip.last"
+            fi
+            
+            # Check if port is actually listening
+            if lsof -i ":$PORT" -sTCP:LISTEN > /dev/null 2>&1; then
+                print_success "Port $PORT is actively listening for connections"
+            else
+                print_warning "Port $PORT is not listening! Service may be restarting"
+            fi
+            
+            # Show version info
+            echo -e "\nVersion: ${BOLD}${VERSION}${NC}"
+            
+            return 0
+        else
+            print_header "WarpClip Service Status"
+            print_warning "Service not running (stale PID file found: $stored_pid)"
+            return 1
+        fi
+    else
+        print_header "WarpClip Service Status"
+        print_error "Service is not running (no PID file found)"
+        return 1
+    fi
+}
+
+# Function to stop the service
+cmd_stop() {
+    if [[ -f "$PID_FILE" ]]; then
+        local stored_pid=$(cat "$PID_FILE")
+        if ps -p "$stored_pid" > /dev/null; then
+            echo "Stopping WarpClip service (PID: $stored_pid)..."
+            kill $stored_pid
+            sleep 1
+            if ps -p "$stored_pid" > /dev/null; then
+                # Force kill if still running
+                print_warning "Service still running, sending SIGKILL..."
+                kill -9 $stored_pid 2>/dev/null || true
+            fi
+            rm -f "$PID_FILE"
+            print_success "Service stopped"
+            return 0
+        else
+            print_warning "Service not running (stale PID file found)"
+            rm -f "$PID_FILE"
+            return 1
+        fi
+    else
+        print_error "Service is not running (no PID file found)"
+        return 1
+    fi
+}
+
+# Function to restart the service
+cmd_restart() {
+    cmd_stop
+    sleep 1
+    cmd_start
+}
+
+# Function to start the service
+cmd_start() {
+    # Check if already running
+    if [[ -f "$PID_FILE" ]]; then
+        local stored_pid=$(cat "$PID_FILE")
+        if ps -p "$stored_pid" > /dev/null; then
+            print_warning "Service already running (PID: $stored_pid)"
+            cmd_status
+            return 0
+        else
+            print_warning "Removing stale PID file"
+            rm -f "$PID_FILE"
+        fi
+    fi
+    
+    # Store PID for status checking with secure permissions
+    echo $$ > "$PID_FILE"
+    chmod 600 "$PID_FILE"  # Security: Owner: rw-, Group: ---, Others: ---
+    
+    print_success "Starting WarpClip service v${VERSION} on port $PORT (PID: $$)"
+    log "INFO" "Starting warpclip server v${VERSION} on port $PORT (PID: $$)"
+    
+    # Main loop
+    run_server
+    
+    return 0
+}
+
+check_port_available() {
+    log "DEBUG" "Checking if port $PORT is available"
+    if lsof -i ":$PORT" > /dev/null 2>&1; then
+        local pid=$(lsof -i ":$PORT" -t)
+        if [[ "$pid" == "$$" ]]; then
+            log "DEBUG" "Port $PORT is used by our own process ($$)"
+            return 0
+        fi
+        log "ERROR" "Port $PORT is already in use by process $pid. Choose a different port or stop the existing process."
+        return 1
+    fi
+    log "DEBUG" "Port $PORT is available"
+    return 0
+}
+
+check_dependencies() {
+    log "DEBUG" "Checking dependencies"
+    if ! command -v nc &> /dev/null; then
+        log "ERROR" "netcat (nc) not found. Please install netcat to use this script."
+        return 1
+    fi
+    
+    if ! command -v pbcopy &> /dev/null; then
+        log "ERROR" "pbcopy not found. This script requires macOS."
+        return 1
+    fi
+    
+    if ! command -v timeout &> /dev/null && ! command -v gtimeout &> /dev/null; then
+        log "WARNING" "timeout/gtimeout command not found. Connection timeouts may not work properly."
+    fi
+    
+    return 0
+}
+
+handle_exit() {
+    log "INFO" "Shutting down warpclip server (PID: $$)"
+    rm -f "$PID_FILE"
+    exit 0
+}
+
+# Set up trap for clean shutdown
+trap handle_exit SIGINT SIGTERM
+
+# Check dependencies
+if ! check_dependencies; then
+    log "ERROR" "Missing required dependencies. Exiting."
+    exit 1
+fi
+
+# Data processor function to handle clipboard content
+process_data() {
+    # Security: Create temporary file with secure pattern and permissions
+    local temp_file=$(mktemp "${TMPDIR:-/tmp}/warpclip.XXXXXXXXXX")
+    if [ ! -f "$temp_file" ]; then
+        log "ERROR" "Failed to create temporary file"
+        return 1
+    fi
+    chmod 600 "$temp_file"  # Security: Ensure secure permissions
+    
+    # Security: Limit data size to prevent memory issues
+    head -c "$MAX_DATA_SIZE" > "$temp_file"
+    
+    local size=$(wc -c < "$temp_file")
+    local lines=$(wc -l < "$temp_file")
+    
+    if [[ $size -eq 0 ]]; then
+        log "WARNING" "Received empty data, nothing copied to clipboard"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    if [[ $size -eq $MAX_DATA_SIZE ]]; then
+        log "WARNING" "Data truncated to $MAX_DATA_SIZE bytes (maximum size limit)"
+    fi
+    
+    log "INFO" "Received data: $size bytes, $lines lines"
+    
+    # Copy to clipboard
+    if cat "$temp_file" | pbcopy; then
+        log "INFO" "✓ Successfully copied to clipboard"
+        # Print success message to stdout (for daemon logs)
+        echo "$(date '+%Y-%m-%d %H:%M:%S') ✓ Copied $size bytes to clipboard"
+    else
+        log "ERROR" "Failed to copy data to clipboard"
+        # Clean up
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # Clean up - use -f to prevent errors if file doesn't exist
+    rm -f "$temp_file"
+    
+    # Touch a timestamp file for status checking
+    local last_file="$HOME/.warpclip.last"
+    echo "$size bytes, $lines lines" > "$last_file"
+    echo "$(date '+%Y-%m-%d %H:%M:%S')" >> "$last_file"
+    chmod 600 "$last_file"  # Security: Ensure secure permissions
+    
+    return 0
+}
+
+# Main loop function
+run_server() {
+    local retry_count=0
+    
+    while true; do
+        if ! check_port_available; then
+            retry_count=$((retry_count + 1))
+            if [ $retry_count -gt $MAX_RETRIES ]; then
+                log "ERROR" "FATAL: Failed to start server after $MAX_RETRIES attempts. Exiting."
+                exit 1
+            fi
+            log "WARNING" "Retrying in $RETRY_DELAY seconds (attempt $retry_count/$MAX_RETRIES)..."
+            sleep $RETRY_DELAY
+            continue
+        fi
+        
+        # Reset retry counter on successful port check
+        retry_count=0
+        
+        log "INFO" "Listening on port $PORT for incoming connections"
+        
+        # Check if netcat supports keep-alive
+        if nc -h 2>&1 | grep -q -- "-k"; then
+            log "DEBUG" "Using netcat with keep-alive support"
+            has_keepalive=true
+        else
+            log "DEBUG" "Netcat does not support keep-alive (-k option)"
+            has_keepalive=false
+        fi
+        
+        # Create a named pipe for handling multiple connections
+        # Security: Use more secure temporary file pattern
+        pipe_file=$(mktemp -u "${TMPDIR:-/tmp}/warpclip_pipe.XXXXXXXXXX")
+        if ! mkfifo "$pipe_file" 2>/dev/null; then
+            log "ERROR" "Failed to create named pipe: $pipe_file"
+            sleep 5
+            continue
+        fi
+        chmod 600 "$pipe_file"  # Security: Secure permissions for the pipe
+        
+        # Set up a background process to read from the pipe and process data
+        (
+            while IFS= read -r line; do
+                echo "$line" | process_data
+            done < "$pipe_file"
+        ) &
+        bg_pid=$!
+        
+        log "DEBUG" "Started background processor with PID $bg_pid"
+        
+        # Use timeout for the netcat connection with keep-alive if available
+        if $has_keepalive; then
+            if command -v timeout &> /dev/null; then
+                log "INFO" "Starting netcat listener with keep-alive (timeout controlled)"
+                # Security: Explicitly bind to localhost only
+                timeout $CONNECTION_TIMEOUT nc -k -l "$BIND_ADDRESS" $PORT > "$pipe_file"
+                exit_code=$?
+            elif command -v gtimeout &> /dev/null; then
+                log "INFO" "Starting netcat listener with keep-alive (gtimeout controlled)"
+                # Security: Explicitly bind to localhost only
+                gtimeout $CONNECTION_TIMEOUT nc -k -l "$BIND_ADDRESS" $PORT > "$pipe_file"
+                exit_code=$?
+            else
+                log "INFO" "Starting netcat listener with keep-alive (no timeout control)"
+                # Security: Explicitly bind to localhost only
+                nc -k -l "$BIND_ADDRESS" $PORT > "$pipe_file"
+                exit_code=$?
+            fi
+        else
+            # Without keep-alive, just use regular nc
+            if command -v timeout &> /dev/null; then
+                log "INFO" "Starting netcat listener without keep-alive (timeout controlled)"
+                # Security: Explicitly bind to localhost only
+                timeout $CONNECTION_TIMEOUT nc -l "$BIND_ADDRESS" $PORT > "$pipe_file"
+                exit_code=$?
+            elif command -v gtimeout &> /dev/null; then
+                log "INFO" "Starting netcat listener without keep-alive (gtimeout controlled)"
+                # Security: Explicitly bind to localhost only
+                gtimeout $CONNECTION_TIMEOUT nc -l "$BIND_ADDRESS" $PORT > "$pipe_file"
+                exit_code=$?
+            else
+                log "INFO" "Starting netcat listener without keep-alive (no timeout control)"
+                # Security: Explicitly bind to localhost only
+                nc -l "$BIND_ADDRESS" $PORT > "$pipe_file"
+                exit_code=$?
+            fi
+        fi
+        
+        # Clean up
+        kill $bg_pid 2>/dev/null || true
+        rm -f "$pipe_file"
+        
+        if [ $exit_code -eq 124 ] || [ $exit_code -eq 143 ]; then
+            # Timeout expired (normal behavior for periodic reconnect)
+            log "INFO" "Listener refreshing after $CONNECTION_TIMEOUT seconds (planned refresh)"
+        elif [ $exit_code -ne 0 ]; then
+            log "WARNING" "nc exited with code $exit_code. Reconnecting..."
+            log "DEBUG" "Sleeping for 5 seconds before reconnecting"
+            sleep 5  # Longer pause on error to prevent CPU thrashing
+        else
+            log "INFO" "Connection closed normally"
+        fi
+        
+        # Brief pause before restarting to avoid hammering CPU if there's an issue
+        log "DEBUG" "Pausing before restart"
+        sleep 3
+    done
+}
+
+# -----------------------------------------------------------------------------
+# Main function - handles command line arguments
+# -----------------------------------------------------------------------------
+
+main() {
+    local cmd="start"  # Default command
+    
+    # Process command line arguments
+    if [[ $# -gt 0 ]]; then
+        cmd="$1"
+        shift
+    fi
+    
+    # Execute the requested command
+    case "$cmd" in
+        start)
+            cmd_start
+            ;;
+        stop)
+            cmd_stop
+            ;;
+        restart)
+            cmd_restart
+            ;;
+        status)
+            cmd_status
+            ;;
+        help)
+            cmd_help
+            ;;
+        version)
+            echo "WarpClip Daemon v$VERSION"
+            ;;
+        *)
+            print_error "Unknown command: $cmd"
+            cmd_help
+            exit 1
+            ;;
+    esac
+    
+    return $?
+}
+
+# Run the main function with all arguments
+main "$@"
+
