@@ -10,7 +10,7 @@
 
 **Remote-to-local clipboard integration for Warp terminal users**
 
-<img src="https://raw.githubusercontent.com/mquinnv/warpclip/main/assets/logo.txt" alt="WarpClip" width="180"/>
+<img src="https://raw.githubusercontent.com/mquinnv/warpclip/main/assets/logo.png" alt="WarpClip" width="180"/>
 
 </div>
 
