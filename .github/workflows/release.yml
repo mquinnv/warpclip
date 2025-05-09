@@ -15,15 +15,15 @@ jobs:
       
       - name: Check script syntax
         run: |
-          bash -n src/warpclip-server.sh
+          bash -n src/warpclipd
           bash -n src/warp-copy
           bash -n install.sh
       
       - name: Run basic tests
         run: |
-          chmod +x src/warpclip-server.sh
+          chmod +x src/warpclipd
           chmod +x src/warp-copy
-          ./src/warpclip-server.sh status || true
+          ./src/warpclipd status || true
           
   build:
     name: Build & Release
