@@ -21,6 +21,16 @@ class Warpclip < Formula
     # Install the server daemon
     bin.install "src/warpclipd"
     
+    # Update version and hard-code localhost binding for security
+    inreplace bin/"warpclipd" do |s|
+      s.gsub!(/^VERSION=.*$/, %Q(VERSION="#{version}"))
+      
+      # Replace all netcat binding commands to always use 127.0.0.1 directly
+      # This ensures security even if environment variables are changed
+      s.gsub!(/nc -k -l (\$BIND_ADDRESS|\"\$BIND_ADDRESS\") \$PORT/, 'nc -k -l 127.0.0.1 $PORT')
+      s.gsub!(/nc -l (\$BIND_ADDRESS|\"\$BIND_ADDRESS\") \$PORT/, 'nc -l 127.0.0.1 $PORT')
+    end
+    
     # Set the proper permissions
     chmod 0755, bin/"warpclip"
     chmod 0755, bin/"warpclipd"
