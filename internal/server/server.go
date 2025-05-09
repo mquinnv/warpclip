@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -132,69 +133,57 @@ func (s *Server) handleConnection(conn net.Conn) {
 		return
 	}
 
-	// Create a buffer with some capacity to avoid reallocations
-	buf := make([]byte, 1024)
-	var data []byte
+	// Read just one byte to check connection type
+	firstByte := make([]byte, 1)
+	n, err := conn.Read(firstByte)
 
-	// Read the first chunk
-	n, err := conn.Read(buf)
-	if err != nil {
-		if err != io.EOF {
-			s.logger.Error(fmt.Sprintf("Error reading initial data: %v", err))
-		} else {
-			// EOF on first read means this is likely the control connection
-			s.logger.Info(fmt.Sprintf("Control connection from %s (no data), closing", remoteAddr))
-		}
+	// If we got EOF or zero bytes, this is a control connection
+	if err == io.EOF || n == 0 {
+		s.logger.Info(fmt.Sprintf("Control connection from %s, closing", remoteAddr))
 		return
 	}
 
-	// If we got data in the first read, this is our data connection
-	if n > 0 {
-		data = append(data, buf[:n]...)
-
-		// Continue reading until EOF or error (up to size limit)
-		totalRead := int64(n)
-		for totalRead < s.cfg.MaxDataSize {
-			n, err = conn.Read(buf)
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				s.logger.Error(fmt.Sprintf("Error reading data: %v", err))
-				return
-			}
-			if n > 0 {
-				data = append(data, buf[:n]...)
-				totalRead += int64(n)
-			}
-		}
-
-		// Process the data
-		if len(data) > 0 {
-			// Check if we hit the size limit
-			if totalRead >= s.cfg.MaxDataSize {
-				s.logger.Warning(fmt.Sprintf("Data exceeded maximum size limit (%d bytes), truncated", s.cfg.MaxDataSize))
-			}
-
-			// Copy data to clipboard
-			if err := s.copyToClipboard(data); err != nil {
-				s.logger.Error(fmt.Sprintf("Failed to copy to clipboard: %v", err))
-				return
-			}
-
-			// Update last activity file
-			if err := s.updateLastActivityFile(len(data)); err != nil {
-				s.logger.Warning(fmt.Sprintf("Failed to update last activity file: %v", err))
-			}
-
-			s.logger.Info(fmt.Sprintf("Successfully copied %d bytes to clipboard", len(data)))
-		} else {
-			s.logger.Warning("Received empty data, nothing to copy")
-		}
-	} else {
-		// Empty first read (0 bytes) - likely secondary connection
-		s.logger.Info(fmt.Sprintf("Secondary connection from %s (empty read), closing", remoteAddr))
+	// If we got any other error, log it and close
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Error reading from connection: %v", err))
+		return
 	}
+
+	// This is a data connection, read the rest of the data
+	var buf bytes.Buffer
+	buf.Write(firstByte) // Don't forget our first byte
+
+	// Create a limited reader to prevent memory exhaustion
+	limitReader := io.LimitReader(conn, s.cfg.MaxDataSize-1) // -1 because we already read one byte
+	_, err = io.Copy(&buf, limitReader)
+	if err != nil {
+		s.logger.Error(fmt.Sprintf("Error reading data: %v", err))
+		return
+	}
+
+	data := buf.Bytes()
+	if len(data) == 0 {
+		s.logger.Warning("Received empty data, nothing to copy")
+		return
+	}
+
+	// Check if we hit the size limit
+	if int64(len(data)) >= s.cfg.MaxDataSize {
+		s.logger.Warning(fmt.Sprintf("Data exceeded maximum size limit (%d bytes), truncated", s.cfg.MaxDataSize))
+	}
+
+	// Copy data to clipboard
+	if err := s.copyToClipboard(data); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to copy to clipboard: %v", err))
+		return
+	}
+
+	// Update last activity file
+	if err := s.updateLastActivityFile(len(data)); err != nil {
+		s.logger.Warning(fmt.Sprintf("Failed to update last activity file: %v", err))
+	}
+
+	s.logger.Info(fmt.Sprintf("Successfully copied %d bytes to clipboard", len(data)))
 }
 
 // cleanupOldConnections removes stale connection records periodically
