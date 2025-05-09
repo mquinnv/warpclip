@@ -2,13 +2,15 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/michael/warpclip/releases)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/mquinnv/warpclip/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
+[![Homebrew](https://img.shields.io/badge/homebrew-coming%20soon-orange.svg)]()
+[![Release Status](https://img.shields.io/github/workflow/status/mquinnv/warpclip/release?label=release)]()
 
-**Remote-to-local clipboard integration for terminal users**
+**Remote-to-local clipboard integration for Warp terminal users**
 
-<img src="https://raw.githubusercontent.com/michael/warpclip/assets/logo.png" alt="WarpClip Logo" width="180"/>
+<img src="https://raw.githubusercontent.com/mquinnv/warpclip/main/assets/logo.txt" alt="WarpClip" width="180"/>
 
 </div>
 
@@ -42,11 +44,20 @@ Instantly, the content of `remote_file.txt` appears in your local clipboard, rea
 
 ## 🚀 Installation
 
-### Quick Installation (Recommended)
+### Homebrew Installation (Coming Soon)
+
+```bash
+# Install via Homebrew (coming soon)
+brew install mquinnv/tap/warpclip
+
+# This will automatically set up all components
+```
+
+### Manual Installation (From Source)
 
 ```bash
 # Clone the repository
-git clone https://github.com/michael/warpclip.git
+git clone https://github.com/mquinnv/warpclip.git
 cd warpclip
 
 # Run the installer
@@ -189,19 +200,52 @@ If data isn't appearing in your clipboard, check:
 
 ## 🔐 Security Considerations
 
+### SSH Tunneling Security
+
 WarpClip uses SSH's secure tunneling for all data transfer, which means:
 
 - All clipboard data is encrypted during transmission
 - No new network ports are exposed to the internet
 - Data is transmitted through your existing SSH session
 
-However, there are some security considerations:
+### Clipboard Security
 
-- Anyone with access to your remote server could potentially send data to your clipboard
+When using WarpClip, be aware of these clipboard-related security considerations:
+
+- Content copied to your clipboard persists until replaced, potentially leading to unintentional sharing
+- The clipboard is a system-wide resource accessible to all applications on your computer
+- Consider using a clipboard manager with auto-clear functionality for sensitive data
+
+### Port Forwarding Considerations
+
+The default configuration uses automatic port forwarding for all SSH connections, which has some implications:
+
+- Anyone with access to a remote server could potentially send data to your clipboard
 - The `warp-copy` script doesn't encrypt data before sending it (relies on SSH encryption)
-- The port forwarding is automatic for all SSH connections unless customized
+- Clipboard tunneling works even from jump hosts or nested SSH sessions
 
-For sensitive environments, consider restricting port forwarding to specific hosts instead of using the wildcard `Host *` configuration.
+For enhanced security:
+
+1. **Limit port forwarding to specific hosts**:
+   ```
+   # Instead of using the wildcard Host *
+   Host trusted-server-1 trusted-server-2
+       RemoteForward 9999 localhost:8888
+   ```
+
+2. **Use non-standard ports** to reduce collision risks:
+   ```
+   Host production-server
+       RemoteForward 12345 localhost:8888
+   ```
+
+3. **Add authentication** to the local clipboard service (consider submitting a PR!)
+
+### Network Considerations
+
+- The local service listens only on `localhost` interface, not exposing network ports externally
+- SSH tunnels are established only when you initiate an SSH connection
+- Check corporate security policies regarding automatic port forwarding
 
 ## 👥 Contributing
 
