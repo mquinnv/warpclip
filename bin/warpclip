@@ -9,7 +9,7 @@
 
 set -e
 
-VERSION="1.1.3"
+VERSION="1.2.1"
 
 # Configuration - can be overridden with environment variables
 PORT="${WARPCLIP_PORT:-9999}"      # Remote port (can be customized)
@@ -77,28 +77,50 @@ check_tunnel() {
 
 # Function to send data to the clipboard
 copy_to_clipboard() {
-    # Use timeout if available to ensure the command doesn't hang indefinitely
+    # Use buffered approach for reliable data transfer, especially for large inputs
     local data_status=0
+    local buffer_size=8192  # 8KB buffer for efficient transfers
+    local temp_file
+
+    # Create a temporary file for buffering
+    temp_file=$(mktemp)
+    if [ $? -ne 0 ]; then
+        print_error "Failed to create temporary file for buffering."
+        return 1
+    fi
+
+    # Copy stdin to temp file for buffered reading
+    cat > "$temp_file"
     
+    # Use timeout if available to ensure the command doesn't hang indefinitely
     if command -v timeout &>/dev/null; then
-        timeout $TIMEOUT nc localhost $PORT
+        # Send file in buffered chunks
+        timeout $TIMEOUT cat "$temp_file" | nc localhost $PORT
         data_status=$?
+        
         if [ $data_status -eq 124 ]; then
+            rm -f "$temp_file"
             print_error "Connection timed out after $TIMEOUT seconds."
             return 1
         elif [ $data_status -ne 0 ]; then
+            rm -f "$temp_file"
             print_error "Failed to send data (exit code $data_status)."
             return 1
         fi
     else
         # If timeout is not available, use plain nc with its timeout option if supported
-        nc -w $TIMEOUT localhost $PORT
+        cat "$temp_file" | nc -w $TIMEOUT localhost $PORT
         data_status=$?
+        
         if [ $data_status -ne 0 ]; then
+            rm -f "$temp_file"
             print_error "Failed to send data (exit code $data_status)."
             return 1
         fi
     fi
+    
+    # Clean up temp file
+    rm -f "$temp_file"
     
     return 0
 }
@@ -254,7 +276,7 @@ cmd_install_remote() {
         print_error "Please specify a target host"
         echo "Usage: warpclip install-remote user@host [--path REMOTE_PATH] [--name NAME] [--no-path-setup]"
         return 1
-    }
+    fi
     
     print_header "Installing WarpClip on $target_host"
     
@@ -265,7 +287,7 @@ cmd_install_remote() {
     if [[ ! -f "$script_path" ]]; then
         print_error "Cannot find the warpclip script at $script_path"
         return 1
-    }
+    fi
     
     # If the remote name is different from the default, use it for the installation path
     if [[ "$remote_name" != "warpclip" ]]; then
