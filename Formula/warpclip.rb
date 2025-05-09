@@ -179,15 +179,24 @@ Host *
 
   # Define the service plist
   service do
-    run [opt_bin/"warpclipd"]
+    # Pass --localhost flag to only bind to localhost (more secure)
+    run [opt_bin/"warpclipd", "--localhost"]
     keep_alive true
+    
+    # Proper logging setup
     log_path "#{Dir.home}/.warpclip.out.log"
     error_log_path "#{Dir.home}/.warpclip.error.log"
     working_dir Dir.home
+    
+    # Include necessary environment variables
     environment_variables PATH: "#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-    # Restart if the process exits for any reason
+    # Restart if the process exits for any reason (with delay to prevent rapid restarts)
     restart_delay 5
+    
+    # Create a service log on status change
+    sockets_dir Dir.home
+    process_type :background
   end
 
   def caveats
