@@ -9,7 +9,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -38,6 +40,29 @@ func main() {
 	if showHelp {
 		printHelp()
 		os.Exit(0)
+	}
+	
+	// Check for commands
+	if len(flag.Args()) > 0 {
+		cmd := flag.Args()[0]
+		switch cmd {
+		case "help":
+			printHelp()
+			os.Exit(0)
+		case "install-remote":
+			if len(flag.Args()) < 2 {
+				fmt.Fprintf(os.Stderr, "Error: Missing remote host argument\n")
+				fmt.Fprintf(os.Stderr, "Usage: warpclip install-remote user@host\n")
+				os.Exit(1)
+			}
+			host := flag.Args()[1]
+			if err := installRemote(host); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stderr, "WarpClip successfully installed on the remote host!\n")
+			os.Exit(0)
+		}
 	}
 	
 // We're going to skip the isEmpty check to avoid consuming stdin data
@@ -211,12 +236,160 @@ func printHelp() {
 	fmt.Printf("WarpClip Remote Client v%s\n", Version)
 	fmt.Println("Usage: cat file.txt | warpclip [options]")
 	fmt.Println("   or: warpclip [options] < file.txt")
+	fmt.Println("   or: warpclip install-remote user@host")
+	fmt.Println("")
+	fmt.Println("Commands:")
+	fmt.Println("  install-remote HOST  Install warpclip on a remote host")
+	fmt.Println("  help                 Show this help message")
 	fmt.Println("")
 	fmt.Println("Options:")
-	fmt.Println("  --port, -p PORT    Specify custom port (default: 9999)")
-	fmt.Println("  --help, -h         Show this help message")
+	fmt.Println("  --port, -p PORT      Specify custom port (default: 9999)")
+	fmt.Println("  --help, -h           Show this help message")
 	fmt.Println("")
 	fmt.Println("WarpClip copies content from the remote server to your local macOS clipboard")
 	fmt.Println("via a secure SSH tunnel. Make sure you connected with port forwarding enabled.")
 }
 
+// installRemote installs warpclip on a remote host
+func installRemote(host string) error {
+    // First, detect the remote OS
+    osType, err := detectRemoteOS(host)
+    if err != nil {
+        return fmt.Errorf("failed to detect remote OS: %w", err)
+    }
+
+    fmt.Fprintf(os.Stderr, "Detected remote OS: %s\n", osType)
+
+    switch osType {
+    case "Linux":
+        return installLinuxRemote(host)
+    case "Darwin":
+        return installDarwinRemote(host)
+    default:
+        return fmt.Errorf("unsupported remote OS: %s", osType)
+    }
+}
+
+// detectRemoteOS determines the OS type of the remote host
+func detectRemoteOS(host string) (string, error) {
+    cmd := exec.Command("ssh", host, "uname -s")
+    output, err := cmd.Output()
+    if err != nil {
+        return "", fmt.Errorf("failed to detect remote OS: %w", err)
+    }
+    return strings.TrimSpace(string(output)), nil
+}
+
+// installLinuxRemote installs warpclip on a Linux remote host
+func installLinuxRemote(host string) error {
+    fmt.Fprintf(os.Stderr, "Installing warpclip on Linux host %s...\n", host)
+
+    // Check if already installed
+    if checkRemoteFile(host, "/usr/local/bin/warpclip") {
+        fmt.Fprintf(os.Stderr, "WarpClip is already installed. Updating...\n")
+    }
+
+    // First, copy our locally built Linux binary
+    fmt.Fprintf(os.Stderr, "Copying local binary to remote host...\n")
+    
+    // Use locally built binary instead of downloading from release
+    localBinary := "warpclip-linux-amd64"
+    if _, err := os.Stat(localBinary); err != nil {
+        return fmt.Errorf("local Linux binary not found: %s", localBinary)
+    }
+
+    // Create temporary directory on remote host
+    tmpDir := fmt.Sprintf("/tmp/warpclip-%d", time.Now().UnixNano())
+    if err := executeRemoteCommand(host, fmt.Sprintf("mkdir -p %s", tmpDir)); err != nil {
+        return fmt.Errorf("failed to create temporary directory: %w", err)
+    }
+    defer executeRemoteCommand(host, fmt.Sprintf("rm -rf %s", tmpDir)) // Clean up
+
+    // Copy binary to remote host
+    scpCmd := exec.Command("scp", localBinary, fmt.Sprintf("%s:%s/warpclip", host, tmpDir))
+    scpCmd.Stdout = os.Stdout
+    scpCmd.Stderr = os.Stderr
+    if err := scpCmd.Run(); err != nil {
+        return fmt.Errorf("failed to copy binary: %w", err)
+    }
+
+    // Install commands (adjusted for fish shell compatibility)
+    commands := []string{
+        "sudo mkdir -p /usr/local/bin",
+        fmt.Sprintf("sudo mv %s/warpclip /usr/local/bin/warpclip", tmpDir),
+        "sudo chmod +x /usr/local/bin/warpclip",
+    }
+
+    // Execute commands
+    for _, cmd := range commands {
+        fmt.Fprintf(os.Stderr, "Running: %s\n", cmd)
+        if err := executeRemoteCommand(host, cmd); err != nil {
+            return fmt.Errorf("installation failed during command '%s': %w", cmd, err)
+        }
+    }
+
+    // Verify installation
+    if err := executeRemoteCommand(host, "which warpclip"); err != nil {
+        return fmt.Errorf("installation verification failed: %w", err)
+    }
+
+    // Verify version
+    if err := executeRemoteCommand(host, "warpclip --help | grep -q 'v" + Version + "'"); err != nil {
+        return fmt.Errorf("version verification failed: binary might be corrupted")
+    }
+
+    fmt.Fprintf(os.Stderr, "Successfully installed warpclip v%s on %s\n", Version, host)
+    return nil
+}
+
+// installDarwinRemote installs warpclip on a macOS remote host
+func installDarwinRemote(host string) error {
+    fmt.Fprintf(os.Stderr, "Installing warpclip on macOS host %s...\n", host)
+
+    // Check if Homebrew is installed
+    hasHomebrew, err := checkRemoteHomebrew(host)
+    if err != nil {
+        return err
+    }
+
+    if !hasHomebrew {
+        return fmt.Errorf("Homebrew not found on remote macOS host. Please install Homebrew first")
+    }
+
+    // Install via Homebrew
+    commands := []string{
+        "brew update",
+        "brew install mquinnv/tap/warpclip",
+        "brew services start warpclip",
+    }
+
+    for _, cmd := range commands {
+        fmt.Fprintf(os.Stderr, "Running: %s\n", cmd)
+        if err := executeRemoteCommand(host, cmd); err != nil {
+            return fmt.Errorf("installation failed: %w", err)
+        }
+    }
+
+    fmt.Fprintf(os.Stderr, "Successfully installed warpclip on %s\n", host)
+    return nil
+}
+
+// checkRemoteHomebrew checks if Homebrew is installed on the remote host
+func checkRemoteHomebrew(host string) (bool, error) {
+    err := executeRemoteCommand(host, "which brew")
+    return err == nil, nil
+}
+
+// executeRemoteCommand executes a command on the remote host
+func executeRemoteCommand(host, command string) error {
+    cmd := exec.Command("ssh", host, command)
+    cmd.Stdout = os.Stdout
+    cmd.Stderr = os.Stderr
+    return cmd.Run()
+}
+
+// checkRemoteFile checks if a file exists on the remote host
+func checkRemoteFile(host, path string) bool {
+    err := executeRemoteCommand(host, fmt.Sprintf("test -f %s", path))
+    return err == nil
+}
