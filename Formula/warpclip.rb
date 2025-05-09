@@ -21,6 +21,10 @@ class Warpclip < Formula
     # Install the server daemon (renaming it for clarity)
     bin.install "src/warpclipd" => "warpclipd"
 
+    # Modify the daemon to always bind to localhost only (127.0.0.1)
+    # This is a security enhancement to prevent exposure to the network
+    inreplace bin/"warpclipd", "nc -l $PORT", "nc -l 127.0.0.1 $PORT"
+    
     # Set the proper permissions
     chmod 0755, bin/"warpclip"
     chmod 0755, bin/"warpclipd"
@@ -179,8 +183,8 @@ Host *
 
   # Define the service plist
   service do
-    # Pass --localhost flag to only bind to localhost (more secure)
-    run [opt_bin/"warpclipd", "--localhost"]
+    # Run the warpclipd daemon (hard-coded to bind only to localhost for security)
+    run [opt_bin/"warpclipd"]
     keep_alive true
     
     # Proper logging setup
@@ -193,10 +197,6 @@ Host *
 
     # Restart if the process exits for any reason (with delay to prevent rapid restarts)
     restart_delay 5
-    
-    # Create a service log on status change
-    sockets_dir Dir.home
-    process_type :background
   end
 
   def caveats
