@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	Version = "2.1.0" // Increment from previous warpclip version (1.0.0) and warpclipd (2.0.0)
+	Version = "2.1.2" // Increment from previous versions
 	DefaultPort = 9999
 	Timeout = 5 * time.Second
 )
@@ -69,18 +69,6 @@ func main() {
 // This check was causing problems because it consumed data from stdin
 // that was then not available to sendToClipboard
 
-	// Check if SSH tunnel is available
-	if !checkTunnel(port) {
-		fmt.Fprintf(os.Stderr, "Error: SSH tunnel not detected on port %d.\n", port)
-		fmt.Fprintln(os.Stderr, "Make sure you connected with SSH using RemoteForward option:")
-		fmt.Fprintf(os.Stderr, "  ssh -R %d:localhost:8888 user@%s\n", port, getHostname())
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Or add to your ~/.ssh/config:")
-		fmt.Fprintf(os.Stderr, "  Host %s\n", getHostname())
-		fmt.Fprintf(os.Stderr, "      RemoteForward %d localhost:8888\n", port)
-		os.Exit(1)
-	}
-	
 	fmt.Fprintln(os.Stderr, "Sending input to clipboard...")
 	
 	// Set up context with signal handling
@@ -186,6 +174,18 @@ func sendToClipboard(ctx context.Context, port int) error {
         fmt.Fprintln(os.Stderr, "  echo 'text' | warpclip")
         fmt.Fprintln(os.Stderr, "  warpclip < file.txt")
         return fmt.Errorf("no data received from stdin")
+    }
+    
+    // Check if SSH tunnel is available
+    if !checkTunnel(port) {
+        fmt.Fprintf(os.Stderr, "Error: SSH tunnel not detected on port %d.\n", port)
+        fmt.Fprintln(os.Stderr, "Make sure you connected with SSH using RemoteForward option:")
+        fmt.Fprintf(os.Stderr, "  ssh -R %d:localhost:8888 user@%s\n", port, getHostname())
+        fmt.Fprintln(os.Stderr, "")
+        fmt.Fprintln(os.Stderr, "Or add to your ~/.ssh/config:")
+        fmt.Fprintf(os.Stderr, "  Host %s\n", getHostname())
+        fmt.Fprintf(os.Stderr, "      RemoteForward %d localhost:8888\n", port)
+        return fmt.Errorf("SSH tunnel not available")
     }
 	
 	// Set up the connection with timeout
