@@ -1,7 +1,5 @@
 package main
 
-const Version = "2.0.0"
-
 import (
 	"context"
 	"flag"
@@ -11,10 +9,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mquinnv/warpclip/internal/config"
-	"github.com/mquinnv/warpclip/internal/log"
-	"github.com/mquinnv/warpclip/internal/server"
+	"github.com/mquinnv/warpclip/v2/internal/config"
+	"github.com/mquinnv/warpclip/v2/internal/log"
+	"github.com/mquinnv/warpclip/v2/internal/server"
 )
+
+const Version = "2.0.0"
 
 func main() {
 	// Define the command line flags
@@ -244,6 +244,5 @@ func showHelp() {
 	fmt.Println("    brew services start warpclip")
 	fmt.Println("    brew services stop warpclip")
 	fmt.Println("    brew services restart warpclip")
-}
 }
 
