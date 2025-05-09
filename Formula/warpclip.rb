@@ -62,7 +62,7 @@ class Warpclip < Formula
     if File.exist?(ssh_config_path) && File.readable?(ssh_config_path)
       begin
         config_content = File.read(ssh_config_path)
-      rescue StandardError
+      rescue
         config_content = ""
       end
       if config_content.include?("RemoteForward 9999 localhost:8888")
