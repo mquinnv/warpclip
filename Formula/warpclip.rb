@@ -19,7 +19,7 @@ class Warpclip < Formula
     bin.install "bin/warpclip"
     
     # Install the server daemon (renaming it for clarity)
-    bin.install "src/warpclip-server.sh" => "warpclipd"
+    bin.install "src/warpclipd" => "warpclipd"
 
     # Set the proper permissions
     chmod 0755, bin/"warpclip"
