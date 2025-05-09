@@ -1,8 +1,8 @@
 class Warpclip < Formula
   desc "Remote-to-local clipboard integration for terminal users"
   homepage "https://github.com/mquinnv/warpclip"
-  url "https://github.com/mquinnv/warpclip/archive/refs/tags/v2.0.1.tar.gz"
-  sha256 "f1e804fba6ae2287ea3331e1d341d61ea18a11a3491525dbdbabb54954f9553f"
+  url "https://github.com/mquinnv/warpclip/archive/refs/tags/v2.1.0.tar.gz"
+  sha256 "daa0e5a830625e0752540499f865ae47556841769ba54f74bf8a46e993cfcdd0"
   license "MIT"
   head "https://github.com/mquinnv/warpclip.git", branch: "main"
 
@@ -16,13 +16,14 @@ class Warpclip < Formula
 
   def install
     # Build the Go server daemon
-    cd "cmd/warpclipd" do
-      system "go", "build", "-o", bin/"warpclipd", 
-             "-ldflags", "-X main.Version=#{version}"
-    end
-
-    # Install the main command-line tool
-    bin.install "bin/warpclip"
+    system "go", "build", "-o", bin/"warpclipd", 
+           "-ldflags", "-X main.Version=#{version}",
+           "./cmd/warpclipd"
+    
+    # Build the Go client
+    system "go", "build", "-o", bin/"warpclip",
+           "-ldflags", "-X main.Version=#{version}",
+           "./cmd/warpclip"
     
     # Set the proper permissions
     chmod 0755, bin/"warpclip"
@@ -205,15 +206,16 @@ Host *
       1. LOCAL COMPONENT (warpclipd):
          • Runs on your Mac and listens for clipboard data
          • Started automatically by Homebrew Services
-         • Now implemented in Go for improved security and reliability
+         • Implemented in Go for improved security and reliability
          
       2. REMOTE COMPONENT (warpclip):
          • Needs to be installed on remote servers you connect to
+         • Now implemented in Go with no external dependencies
          • Sends data back to your Mac through SSH tunnel
 
       To use WarpClip on a remote server:
-      1. Install the client script on your remote server:
-         #{opt_bin}/warpclip install-remote user@remote-server
+      1. Copy the warpclip binary to your remote server:
+         scp #{opt_bin}/warpclip user@remote-server:~/bin/
 
       2. Connect to your remote server with SSH forwarding:
          ssh user@remote-server
@@ -227,9 +229,8 @@ Host *
 
       • Copy data to clipboard (on remote server):
         cat file.txt | warpclip
-
-      • Install on a remote server (from local machine):
-        warpclip install-remote user@remote-server
+        echo "text" | warpclip
+        warpclip < file.txt
 
       • Show help and usage information:
         warpclip help
@@ -251,19 +252,11 @@ Host *
     assert_path_exists "#{opt_bin}/warpclipd"
     assert_path_exists "#{opt_bin}/warpclip"
 
-    # Basic syntax check for warpclip
-    system opt_bin/"warpclip", "--version"
+    # Check version output for both binaries
+    assert_match "v#{version}", shell_output("#{opt_bin}/warpclip --help")
+    assert_match "v#{version}", shell_output("#{opt_bin}/warpclipd --version")
 
     # Basic syntax check for warpclipd
-    begin
-      system opt_bin/"warpclipd", "status"
-    rescue
-      nil
-    end
-    # Check if warpclip script has expected content
-    assert_match "WarpClip v#{version}", shell_output("#{opt_bin}/warpclip --version")
-    
-    # For Go binary, just check it exists and runs
-    system opt_bin/"warpclipd", "--help"
+    system "#{opt_bin}/warpclipd", "--help"
   end
 end
