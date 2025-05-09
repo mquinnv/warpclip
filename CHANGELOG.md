@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.1.3] - 2025-05-09
+
+### Fixed
+- Updated homebrew formula to point to the correct 2.1.3 release tarball
+- Fixed version inconsistencies across project files
+- Improved version tracking and reference handling
+
+### Changed
+- Updated all version references to 2.1.3 for consistency
+- Enhanced homebrew integration with latest release artifacts
+
 ## [2.1.0] - 2025-05-09
 
 ### Fixed

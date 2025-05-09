@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mquinnv/warpclip/releases)
+[![Version](https://img.shields.io/badge/version-2.1.3-blue.svg)](https://github.com/mquinnv/warpclip/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 [![Homebrew](https://img.shields.io/badge/homebrew-coming%20soon-orange.svg)]()
@@ -42,7 +42,7 @@ Instantly, the content of `remote_file.txt` appears in your local clipboard, rea
 - **SSH client** with port forwarding capabilities
 - **Go 1.18+** (only if building from source)
 
-> **Note:** As of version 2.1.0, the remote client is written in Go and no longer requires netcat!
+> **Note:** As of version 2.1.3, the remote client is written in Go and no longer requires netcat!
 
 ## 🚀 Installation
 
@@ -160,7 +160,7 @@ WarpClip consists of three main components:
 
 When you pipe content to `warpclip` on a remote server, it securely transmits the data through the SSH tunnel to your local WarpClip server, which then copies it to your clipboard using `pbcopy`.
 
-> **Version 2.1.0 Update:** The remote client has been completely rewritten in Go, eliminating the need for netcat and providing improved error handling, signal management, and reliability.
+> **Version 2.1.3 Update:** The remote client has been completely rewritten in Go, eliminating the need for netcat and providing improved error handling, signal management, and reliability.
 
 ## 🔧 Troubleshooting
 
