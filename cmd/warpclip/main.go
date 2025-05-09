@@ -4,10 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,7 +22,7 @@ import (
 )
 
 const (
-	Version = "2.1.2" // Increment from previous versions
+	Version = "2.1.3" // Increment from previous versions
 	DefaultPort = 9999
 	Timeout = 5 * time.Second
 )
@@ -27,14 +31,23 @@ func main() {
 	// Define command line flags
 	var port int
 	var showHelp bool
+	var showVersion bool
 
 	flag.IntVar(&port, "port", DefaultPort, "Specify custom port")
 	flag.IntVar(&port, "p", DefaultPort, "Specify custom port (shorthand)")
 	flag.BoolVar(&showHelp, "help", false, "Show help message")
 	flag.BoolVar(&showHelp, "h", false, "Show help message (shorthand)")
+	flag.BoolVar(&showVersion, "version", false, "Show version information")
+	flag.BoolVar(&showVersion, "v", false, "Show version information (shorthand)")
 	
 	// Parse flags
 	flag.Parse()
+	
+	// Show version and exit if requested
+	if showVersion {
+		fmt.Printf("WarpClip Remote Client v%s\n", Version)
+		os.Exit(0)
+	}
 	
 	// Show help and exit if requested
 	if showHelp {
@@ -280,6 +293,15 @@ func detectRemoteOS(host string) (string, error) {
     return strings.TrimSpace(string(output)), nil
 }
 
+// Release represents a GitHub release
+type Release struct {
+	TagName string `json:"tag_name"`
+	Assets  []struct {
+		Name        string `json:"name"`
+		DownloadURL string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
 // installLinuxRemote installs warpclip on a Linux remote host
 func installLinuxRemote(host string) error {
     fmt.Fprintf(os.Stderr, "Installing warpclip on Linux host %s...\n", host)
@@ -289,15 +311,6 @@ func installLinuxRemote(host string) error {
         fmt.Fprintf(os.Stderr, "WarpClip is already installed. Updating...\n")
     }
 
-    // First, copy our locally built Linux binary
-    fmt.Fprintf(os.Stderr, "Copying local binary to remote host...\n")
-    
-    // Use locally built binary instead of downloading from release
-    localBinary := "warpclip-linux-amd64"
-    if _, err := os.Stat(localBinary); err != nil {
-        return fmt.Errorf("local Linux binary not found: %s", localBinary)
-    }
-
     // Create temporary directory on remote host
     tmpDir := fmt.Sprintf("/tmp/warpclip-%d", time.Now().UnixNano())
     if err := executeRemoteCommand(host, fmt.Sprintf("mkdir -p %s", tmpDir)); err != nil {
@@ -305,12 +318,45 @@ func installLinuxRemote(host string) error {
     }
     defer executeRemoteCommand(host, fmt.Sprintf("rm -rf %s", tmpDir)) // Clean up
 
-    // Copy binary to remote host
-    scpCmd := exec.Command("scp", localBinary, fmt.Sprintf("%s:%s/warpclip", host, tmpDir))
-    scpCmd.Stdout = os.Stdout
-    scpCmd.Stderr = os.Stderr
-    if err := scpCmd.Run(); err != nil {
-        return fmt.Errorf("failed to copy binary: %w", err)
+    // Fetch latest release info from GitHub
+    fmt.Fprintf(os.Stderr, "Fetching latest release from GitHub...\n")
+    releaseInfo, err := getLatestRelease()
+    if err != nil {
+        return fmt.Errorf("failed to fetch release info: %w", err)
+    }
+
+    // Find Linux binary in assets
+    var downloadURL string
+    for _, asset := range releaseInfo.Assets {
+        if strings.Contains(asset.Name, "linux-amd64") {
+            downloadURL = asset.DownloadURL
+            break
+        }
+    }
+    
+    if downloadURL == "" {
+        return fmt.Errorf("could not find Linux binary in release assets")
+    }
+
+    // Download the binary to the remote host
+    fmt.Fprintf(os.Stderr, "Downloading binary from GitHub release: %s\n", downloadURL)
+    downloadCmd := fmt.Sprintf("curl -L '%s' -o %s/warpclip", downloadURL, tmpDir)
+    if err := executeRemoteCommand(host, downloadCmd); err != nil {
+        return fmt.Errorf("failed to download binary: %w", err)
+    }
+
+    // Verify download was successful
+    if err := executeRemoteCommand(host, fmt.Sprintf("test -f %s/warpclip", tmpDir)); err != nil {
+        return fmt.Errorf("binary download appears to have failed: %w", err)
+    }
+    
+    // Calculate and verify checksum (if available)
+    checksumResult, err := verifyBinaryChecksum(host, tmpDir, releaseInfo.TagName)
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Warning: Checksum verification failed: %v\n", err)
+        fmt.Fprintf(os.Stderr, "Continuing with installation anyway...\n")
+    } else if checksumResult {
+        fmt.Fprintf(os.Stderr, "Checksum verification successful\n")
     }
 
     // Install commands (adjusted for fish shell compatibility)
@@ -340,6 +386,88 @@ func installLinuxRemote(host string) error {
 
     fmt.Fprintf(os.Stderr, "Successfully installed warpclip v%s on %s\n", Version, host)
     return nil
+}
+
+// getLatestRelease fetches the latest release information from GitHub
+func getLatestRelease() (*Release, error) {
+    url := "https://api.github.com/repos/mquinnv/warpclip/releases/latest"
+    
+    // Create HTTP client with timeout
+    client := &http.Client{Timeout: 30 * time.Second}
+    
+    // Create request with user agent (required by GitHub API)
+    req, err := http.NewRequest("GET", url, nil)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create request: %w", err)
+    }
+    req.Header.Set("User-Agent", "WarpClip-Installer")
+    
+    // Make the request
+    resp, err := client.Do(req)
+    if err != nil {
+        return nil, fmt.Errorf("failed to fetch release info: %w", err)
+    }
+    defer resp.Body.Close()
+    
+    // Check response status
+    if resp.StatusCode != http.StatusOK {
+        return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+    }
+    
+    // Parse the response
+    var release Release
+    if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+        return nil, fmt.Errorf("failed to parse release info: %w", err)
+    }
+    
+    return &release, nil
+}
+
+// verifyBinaryChecksum verifies the checksum of the downloaded binary
+func verifyBinaryChecksum(host, tmpDir, version string) (bool, error) {
+    // Try to download the checksums file
+    checksumURL := fmt.Sprintf("https://github.com/mquinnv/warpclip/releases/download/%s/checksums.txt", version)
+    checksumPath := fmt.Sprintf("%s/checksums.txt", tmpDir)
+    
+    // Download checksums file to remote host
+    downloadCmd := fmt.Sprintf("curl -L '%s' -o %s || echo 'Not found'", checksumURL, checksumPath)
+    if err := executeRemoteCommand(host, downloadCmd); err != nil {
+        return false, fmt.Errorf("failed to download checksums file: %w", err)
+    }
+    
+    // Check if checksums file exists
+    if err := executeRemoteCommand(host, fmt.Sprintf("test -f %s", checksumPath)); err != nil {
+        return false, fmt.Errorf("checksums file not found")
+    }
+    
+    // Calculate SHA256 checksum of the binary
+    calcSumCmd := fmt.Sprintf("sha256sum %s/warpclip | cut -d ' ' -f 1", tmpDir)
+    calcSumCmdOutput, err := exec.Command("ssh", host, calcSumCmd).Output()
+    if err != nil {
+        return false, fmt.Errorf("failed to calculate checksum: %w", err)
+    }
+    
+    calculatedSum := strings.TrimSpace(string(calcSumCmdOutput))
+    
+    // Extract expected checksum from checksums file
+    grepCmd := fmt.Sprintf("grep -i linux-amd64 %s | cut -d ' ' -f 1", checksumPath)
+    expectedSumOutput, err := exec.Command("ssh", host, grepCmd).Output()
+    if err != nil {
+        return false, fmt.Errorf("failed to extract expected checksum: %w", err)
+    }
+    
+    expectedSum := strings.TrimSpace(string(expectedSumOutput))
+    
+    // Verify checksums match
+    if calculatedSum == "" || expectedSum == "" {
+        return false, fmt.Errorf("failed to get checksums for comparison")
+    }
+    
+    if calculatedSum != expectedSum {
+        return false, fmt.Errorf("checksum mismatch. Expected: %s, got: %s", expectedSum, calculatedSum)
+    }
+    
+    return true, nil
 }
 
 // installDarwinRemote installs warpclip on a macOS remote host
