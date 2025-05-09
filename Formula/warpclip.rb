@@ -2,11 +2,12 @@ class Warpclip < Formula
   desc "Remote-to-local clipboard integration for Warp terminal users"
   homepage "https://github.com/mquinnv/warpclip"
   url "https://github.com/mquinnv/warpclip/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "a8bc2dc70074b47fce49b22b51e4e3e6f4fbedd55a88806b5081ab9b9efd677a" # This will need to be updated with the actual hash after the first release
+  sha256 "a8bc2dc70074b47fce49b22b51e4e3e6f4fbedd55a88806b5081ab9b9efd677a"
   license "MIT"
   head "https://github.com/mquinnv/warpclip.git", branch: "main"
 
   depends_on "netcat"
+  depends_on :macos
 
   livecheck do
     url :stable
@@ -22,46 +23,32 @@ class Warpclip < Formula
     chmod 0755, bin/"warpclip-server.sh"
     chmod 0755, bin/"warp-copy"
 
-    # Install LaunchAgent template
-    prefix.install "etc/com.user.warpclip.plist"
+    # Install example files to share directory
+    share.install "etc/com.user.warpclip.plist"
+    share.install "examples/ssh_config" => "warpclip-ssh-config-example"
   end
 
   def post_install
-    # Create user LaunchAgent directory if it doesn't exist
-    user_launch_agents_path = "#{Dir.home}/Library/LaunchAgents"
-    mkdir_p user_launch_agents_path unless Dir.exist?(user_launch_agents_path)
-
-    # Customize and install the plist file
-    plist_path = "#{Dir.home}/Library/LaunchAgents/com.user.warpclip.plist"
+    # Create log directory and files with proper permissions
+    log_file = "#{Dir.home}/.warpclip.log"
+    debug_file = "#{Dir.home}/.warpclip.debug.log"
     
-    # Make a backup of existing file if it exists
-    if File.exist?(plist_path)
-      backup_path = "#{plist_path}.backup-#{Time.now.strftime("%Y%m%d%H%M%S")}"
-      system "cp", plist_path, backup_path
-      ohai "Backed up existing LaunchAgent to #{backup_path}"
+    unless File.exist?(log_file)
+      touch log_file
+      chmod 0600, log_file
     end
-
-    # Copy plist template
-    plist_template = "#{prefix}/com.user.warpclip.plist"
-    plist_content = File.read(plist_template)
     
-    # Replace home directory path with user's actual home directory
-    plist_content.gsub!("/Users/michael", Dir.home)
-    
-    # Replace binary path with Homebrew binary path
-    plist_content.gsub!("~/bin/warpclip-server.sh", "#{bin}/warpclip-server.sh")
-    
-    # Write the customized plist
-    File.write(plist_path, plist_content)
-    chmod 0644, plist_path
+    unless File.exist?(debug_file)
+      touch debug_file
+      chmod 0600, debug_file
+    end
     
     # Setup SSH config
     setup_ssh_config
     
-    # Load the LaunchAgent
-    system "launchctl", "unload", plist_path rescue nil
-    system "launchctl", "load", plist_path
-    ohai "Loaded and started the WarpClip LaunchAgent"
+    # Print instructions for loading the service
+    ohai "WarpClip installation complete. Start the service with:"
+    puts "  brew services start warpclip"
   end
   
   def setup_ssh_config
@@ -87,7 +74,7 @@ class Warpclip < Formula
       # Append our configuration
       forward_config = %Q{
 # WarpClip SSH Configuration
-# Added by Homebrew on #{Time.now.strftime("%Y-%m-%d %H:%M:%S")}
+# Added by Homebrew (#{name}) on #{Time.now.strftime("%Y-%m-%d %H:%M:%S")}
 Host *
     RemoteForward 9999 localhost:8888
       }.strip
@@ -102,49 +89,76 @@ Host *
     end
   end
 
+  # Define the service plist
+  service do
+    run [opt_bin/"warpclip-server.sh"]
+    keep_alive true
+    log_path "#{Dir.home}/.warpclip.out.log"
+    error_log_path "#{Dir.home}/.warpclip.error.log"
+    working_dir "#{Dir.home}"
+    environment_variables PATH: "#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+    # Restart if the process exits for any reason
+    restart_delay 5
+  end
+
   def caveats
     <<~EOS
-      WarpClip has been installed and the service has been started.
-
-      ✓ Server script: #{bin}/warpclip-server.sh
-      ✓ Client script: #{bin}/warp-copy
-      ✓ LaunchAgent: ~/Library/LaunchAgents/com.user.warpclip.plist
-      ✓ SSH configuration: RemoteForward added to ~/.ssh/config
-
-      To use warp-copy on a remote server:
+      WarpClip has been installed. To start the service:
+      
+        brew services start warpclip
+      
+      IMPORTANT: WarpClip consists of two components:
+      
+      1. LOCAL COMPONENT (warpclip-server.sh):
+         • Runs on your Mac and listens for clipboard data
+         • Started automatically by Homebrew Services
+      
+      2. REMOTE COMPONENT (warp-copy):
+         • Needs to be copied to remote servers you connect to
+         • Sends data back to your Mac through SSH tunnel
+      
+      To use WarpClip on a remote server:
       
       1. Copy the client script to your remote server:
-         scp #{bin}/warp-copy user@remote-server:~/bin/
+         scp #{opt_bin}/warp-copy user@remote-server:~/bin/
       
       2. Make it executable:
          ssh user@remote-server "chmod +x ~/bin/warp-copy"
       
-      3. Use it on the remote server:
-         cat file.txt | warp-copy
+      3. Connect to your remote server with SSH forwarding:
+         ssh user@remote-server
+         (This works automatically if you use the default SSH config)
+      
+      4. On the remote server, pipe content to warp-copy:
+         cat remote-file.txt | warp-copy
+      
+      The content will be copied to your local Mac clipboard!
       
       Status and troubleshooting:
       
       • Check service status:
-        #{bin}/warpclip-server.sh status
+        brew services info warpclip
+        #{opt_bin}/warpclip-server.sh status
         
       • View logs:
         cat ~/.warpclip.log
+        cat ~/.warpclip.debug.log
         
       • Restart service:
-        launchctl unload ~/Library/LaunchAgents/com.user.warpclip.plist
-        launchctl load ~/Library/LaunchAgents/com.user.warpclip.plist
+        brew services restart warpclip
     EOS
   end
 
   test do
-    assert_predicate bin/"warpclip-server.sh", :exist?
-    assert_predicate bin/"warp-copy", :exist?
+    assert_predicate opt_bin/"warpclip-server.sh", :exist?
+    assert_predicate opt_bin/"warp-copy", :exist?
     
     # Basic syntax check
-    system bin/"warpclip-server.sh", "status"
+    system opt_bin/"warpclip-server.sh", "status" rescue nil
     
     # Check if the script has expected content
-    assert_match "warpclip server", shell_output("head -n 5 #{bin}/warpclip-server.sh")
+    assert_match "warpclip server", shell_output("head -n 5 #{opt_bin}/warpclip-server.sh")
   end
 end
 
