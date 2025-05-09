@@ -18,65 +18,12 @@ class Warpclip < Formula
     # Install the main command-line tool
     bin.install "bin/warpclip"
 
-    # Install the server daemon (renaming it for clarity)
-    # Install the original daemon script with a .real extension
-    bin.install "src/warpclipd" => "warpclipd.real"
-    
-    # Create a wrapper script with process management
-    (bin/"warpclipd").write <<~EOS
-      #!/bin/bash
-      #
-      # warpclipd - Secure clipboard daemon with process management
-      #
-      
-      # Configuration
-      PID_FILE="${HOME}/.warpclip.pid"
-      LOG_FILE="${HOME}/.warpclip.log"
-      DEBUG_LOG="${HOME}/.warpclip.debug.log"
-      
-      # Function to clean up on exit
-      cleanup() {
-        echo "$(date): Shutting down warpclip daemon" >> "${LOG_FILE}"
-        if [ -f "${PID_FILE}" ]; then
-          rm -f "${PID_FILE}"
-        fi
-        # Kill any remaining netcat processes
-        pkill -f "nc -l 127.0.0.1" 2>/dev/null
-        exit 0
-      }
-      
-      # Set up signal handlers
-      trap cleanup SIGINT SIGTERM EXIT
-      
-      # Check if already running
-      if [ -f "${PID_FILE}" ]; then
-        PID=$(cat "${PID_FILE}")
-        if ps -p "${PID}" >/dev/null 2>&1; then
-          echo "warpclipd is already running (PID: ${PID})"
-          exit 1
-        else
-          # Stale PID file
-          rm -f "${PID_FILE}"
-        fi
-      fi
-      
-      # Record current PID
-      echo $$ > "${PID_FILE}"
-      chmod 600 "${PID_FILE}"
-      
-      # Start the actual daemon with localhost binding
-      echo "$(date): Starting warpclip daemon (PID: $$)" >> "${LOG_FILE}"
-      exec #{opt_bin}/warpclipd.real "$@"
-    EOS
-    
-    # Modify the daemon to always bind to localhost only (127.0.0.1)
-    # This is a security enhancement to prevent exposure to the network
-    inreplace bin/"warpclipd.real", "nc -l $PORT", "nc -l 127.0.0.1 $PORT"
+    # Install the server daemon
+    bin.install "src/warpclipd"
     
     # Set the proper permissions
     chmod 0755, bin/"warpclip"
     chmod 0755, bin/"warpclipd"
-    chmod 0755, bin/"warpclipd.real"
 
     # Install example files to share directory
     share.install "etc/com.user.warpclip.plist"
@@ -84,24 +31,15 @@ class Warpclip < Formula
   end
 
   def post_install
-    # Create log and PID files with proper permissions
-    log_file = "#{Dir.home}/.warpclip.log"
-    debug_file = "#{Dir.home}/.warpclip.debug.log"
-    pid_file = "#{Dir.home}/.warpclip.pid"
-
-    unless File.exist?(log_file)
-      touch log_file
-      chmod 0600, log_file
-    end
-
-    unless File.exist?(debug_file)
-      touch debug_file
-      chmod 0600, debug_file
-    end
-    
-    # Remove stale PID file if it exists
-    if File.exist?(pid_file)
-      rm_f pid_file
+    # Create log files with proper permissions
+    ["#{Dir.home}/.warpclip.log",
+     "#{Dir.home}/.warpclip.debug.log",
+     "#{Dir.home}/.warpclip.out.log",
+     "#{Dir.home}/.warpclip.error.log"].each do |f|
+      unless File.exist?(f)
+        touch f
+        chmod 0600, f
+      end
     end
 
     # Setup SSH config
@@ -238,7 +176,7 @@ Host *
 
   # Define the service plist
   service do
-    # Run the warpclipd daemon (hard-coded to bind only to localhost for security)
+    # Run the warpclipd daemon (with built-in localhost-only binding)
     run [opt_bin/"warpclipd"]
     keep_alive true
     
@@ -320,7 +258,6 @@ Host *
     end
     # Check if the scripts have expected content
     assert_match "WarpClip v#{version}", shell_output("#{opt_bin}/warpclip --version")
-    assert_match "warpclip server", shell_output("head -n 10 #{opt_bin}/warpclipd.real")
-    assert_match "cleanup", shell_output("head -n 30 #{opt_bin}/warpclipd")
+    assert_match "warpclipd - WarpClip clipboard daemon", shell_output("head -n 10 #{opt_bin}/warpclipd")
   end
 end
