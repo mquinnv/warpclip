@@ -124,6 +124,7 @@ ${BOLD}COMMANDS:${NC}
 ${BOLD}OPTIONS:${NC}
   ${BOLD}--port, -p${NC} PORT       Specify custom port (default: $PORT)
   ${BOLD}--path${NC} PATH           Remote installation path (default: ~/bin/warpclip)
+  ${BOLD}--name${NC} NAME           Remote script name (default: warpclip, alternatives: pbcopy)
   ${BOLD}--no-path-setup${NC}       Skip adding ~/bin to PATH in shell configuration files
   ${BOLD}--help, -h${NC}            Show help message
   ${BOLD}--version, -v${NC}         Show version information
@@ -149,6 +150,9 @@ ${BOLD}EXAMPLES:${NC}
   
   # Install with custom remote path
   warpclip install-remote user@remote-server --path /usr/local/bin/warpclip
+  
+  # Install as 'pbcopy' on the remote server
+  warpclip install-remote user@remote-server --name pbcopy
   
   # Install without modifying PATH
   warpclip install-remote user@remote-server --no-path-setup
@@ -211,12 +215,17 @@ cmd_install_remote() {
     local target_host=""
     local remote_path="$REMOTE_INSTALL_PATH"
     local setup_path=true
+    local remote_name="warpclip"
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --path)
                 remote_path="$2"
+                shift 2
+                ;;
+            --name)
+                remote_name="$2"
                 shift 2
                 ;;
             --no-path-setup)
@@ -243,9 +252,9 @@ cmd_install_remote() {
     
     if [[ -z "$target_host" ]]; then
         print_error "Please specify a target host"
-        echo "Usage: warpclip install-remote user@host [--path REMOTE_PATH] [--no-path-setup]"
+        echo "Usage: warpclip install-remote user@host [--path REMOTE_PATH] [--name NAME] [--no-path-setup]"
         return 1
-    fi
+    }
     
     print_header "Installing WarpClip on $target_host"
     
@@ -256,10 +265,16 @@ cmd_install_remote() {
     if [[ ! -f "$script_path" ]]; then
         print_error "Cannot find the warpclip script at $script_path"
         return 1
+    }
+    
+    # If the remote name is different from the default, use it for the installation path
+    if [[ "$remote_name" != "warpclip" ]]; then
+        remote_path="$(dirname "$remote_path")/$remote_name"
     fi
     
     echo -e "Installing from: ${BOLD}$script_path${NC}"
     echo -e "Installing to:   ${BOLD}$target_host:$remote_path${NC}"
+    echo -e "Remote name:     ${BOLD}$remote_name${NC}"
     echo ""
     
     # Create the directory on the remote host
@@ -297,6 +312,13 @@ cmd_install_remote() {
             
             # Try to detect shell and configure PATH
             local shell_rc=""
+            local fish_config=""
+            
+            if ssh "$target_host" "[ -f ~/.config/fish/config.fish ]"; then
+                fish_config="~/.config/fish/config.fish"
+                print_success "Found fish shell configuration"
+            fi
+            
             if ssh "$target_host" "[ -f ~/.bashrc ]"; then
                 shell_rc="~/.bashrc"
                 print_success "Found ~/.bashrc"
@@ -306,11 +328,12 @@ cmd_install_remote() {
             elif ssh "$target_host" "[ -f ~/.profile ]"; then
                 shell_rc="~/.profile"
                 print_success "Found ~/.profile"
-            else
+            elif [[ -z "$fish_config" ]]; then
                 print_warning "Could not find shell configuration file"
                 print_warning "You may need to add ${remote_dir} to your PATH manually"
             fi
             
+            # Configure path for detected shells
             if [[ -n "$shell_rc" ]]; then
                 # Add PATH entry to shell rc file
                 ssh "$target_host" "echo 'export PATH=\"${remote_dir}:\$PATH\"' >> $shell_rc" || {
@@ -319,6 +342,17 @@ cmd_install_remote() {
                 }
                 print_success "Added ${remote_dir} to PATH in $shell_rc"
                 print_warning "You will need to restart your shell or run 'source $shell_rc' for PATH changes to take effect"
+            fi
+            
+            # Configure fish shell if detected
+            if [[ -n "$fish_config" ]]; then
+                # Add PATH entry to fish config
+                ssh "$target_host" "mkdir -p ~/.config/fish && echo 'fish_add_path ${remote_dir}' >> $fish_config" || {
+                    print_warning "Failed to update fish shell configuration"
+                    print_warning "You may need to add ${remote_dir} to your PATH manually in fish"
+                }
+                print_success "Added ${remote_dir} to PATH in $fish_config"
+                print_warning "You will need to restart your fish shell or run 'source $fish_config' for PATH changes to take effect"
             fi
         else
             print_warning "Installation directory is not in PATH"
@@ -344,7 +378,7 @@ cmd_install_remote() {
     echo "You can now use it on the remote server:"
     
     if [[ "$in_path" == "true" || "$setup_path" == "true" ]]; then
-        echo "  ${BOLD}cat file.txt | warpclip${NC}"
+        echo "  ${BOLD}cat file.txt | $remote_name${NC}"
     else
         echo "  ${BOLD}cat file.txt | $remote_path${NC}"
     fi

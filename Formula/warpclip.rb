@@ -25,9 +25,6 @@ class Warpclip < Formula
     chmod 0755, bin/"warpclip"
     chmod 0755, bin/"warpclipd"
 
-    # For backward compatibility, create a symlink for warp-copy
-    bin.install_symlink bin/"warpclip" => "warp-copy"
-
     # Install example files to share directory
     share.install "etc/com.user.warpclip.plist"
     share.install "examples/ssh_config" => "warpclip-ssh-config-example"
