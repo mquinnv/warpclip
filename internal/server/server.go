@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mquinnv/warpclip/internal/config"
-	"github.com/mquinnv/warpclip/internal/log"
+	"github.com/mquinnv/warpclip/v2/internal/config"
+	"github.com/mquinnv/warpclip/v2/internal/log"
 )
 
 // Server represents the warpclipd TCP server
