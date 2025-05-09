@@ -145,7 +145,7 @@ ${BOLD}COMMANDS:${NC}
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}--port, -p${NC} PORT       Specify custom port (default: $PORT)
-  ${BOLD}--path${NC} PATH           Remote installation path (default: ~/bin/warpclip)
+  ${BOLD}--path${NC} PATH           Remote installation path (auto-detected based on remote OS)
   ${BOLD}--name${NC} NAME           Remote script name (default: warpclip, alternatives: pbcopy)
   ${BOLD}--no-path-setup${NC}       Skip adding ~/bin to PATH in shell configuration files
   ${BOLD}--help, -h${NC}            Show help message
@@ -187,8 +187,9 @@ ${BOLD}NOTES:${NC}
     Host *
         RemoteForward $PORT localhost:$LOCAL_PORT
         
-  By default, the script is installed to ~/bin/warpclip on the remote server
-  and the directory is added to PATH in the appropriate shell configuration file.
+  Default installation paths are intelligently chosen based on the remote system:
+    - Linux: /usr/local/bin/warpclip (requires sudo)
+    - macOS: Uses Homebrew prefix if available, otherwise ~/bin/warpclip
 
 ${BOLD}For more information, see:${NC} https://github.com/mquinnv/warpclip
 EOF
@@ -235,15 +236,17 @@ cmd_copy() {
 # Install warpclip on a remote server
 cmd_install_remote() {
     local target_host=""
-    local remote_path="$REMOTE_INSTALL_PATH"
+    local remote_path=""
     local setup_path=true
     local remote_name="warpclip"
+    local custom_path_specified=false
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --path)
                 remote_path="$2"
+                custom_path_specified=true
                 shift 2
                 ;;
             --name)
@@ -280,6 +283,36 @@ cmd_install_remote() {
     
     print_header "Installing WarpClip on $target_host"
     
+    # Only detect remote OS and choose path if custom path wasn't specified
+    if ! $custom_path_specified; then
+        echo "Detecting remote system..."
+        local remote_os=$(ssh "$target_host" "uname -s" 2>/dev/null)
+        
+        if [[ "$remote_os" == "Linux" ]]; then
+            remote_path="/usr/local/bin/warpclip"
+            print_success "Detected Linux system, using path: $remote_path"
+            print_warning "Note: This installation path requires sudo privileges"
+            
+        elif [[ "$remote_os" == "Darwin" ]]; then
+            # For macOS, try to detect Homebrew first
+            if ssh "$target_host" "command -v brew >/dev/null 2>&1"; then
+                # Get Homebrew prefix on the remote system
+                local brew_prefix=$(ssh "$target_host" "brew --prefix")
+                remote_path="${brew_prefix}/bin/warpclip"
+                print_success "Detected macOS with Homebrew, using path: $remote_path"
+            else
+                # Fall back to user's bin directory
+                remote_path="$HOME/bin/warpclip"
+                print_success "Detected macOS without Homebrew, using path: $remote_path"
+            fi
+            
+        else
+            # Fallback to REMOTE_INSTALL_PATH or ~/bin if OS detection fails
+            remote_path="${REMOTE_INSTALL_PATH:-$HOME/bin/warpclip}"
+            print_warning "Could not reliably detect remote OS, using default path: $remote_path"
+        fi
+    fi
+    
     # Get the path to this script
     local script_path=$(which warpclip 2>/dev/null || echo "$0")
     
@@ -301,24 +334,55 @@ cmd_install_remote() {
     
     # Create the directory on the remote host
     echo "Creating remote directory..."
-    ssh "$target_host" "mkdir -p $(dirname $remote_path)" || {
-        print_error "Failed to create directory on remote host"
-        return 1
-    }
+    if [[ "$remote_path" == "/usr/local/bin/warpclip" || "$remote_path" == /opt/homebrew/bin/warpclip || "$remote_path" =~ ^/usr/local/Cellar || "$remote_path" =~ ^/opt/homebrew/Cellar ]]; then
+        # System paths that likely need sudo
+        ssh "$target_host" "sudo mkdir -p $(dirname $remote_path)" || {
+            print_error "Failed to create directory on remote host (sudo required)"
+            print_warning "If you don't have sudo access, try again with '--path ~/bin/warpclip'"
+            return 1
+        }
+    else
+        # User paths that shouldn't need sudo
+        ssh "$target_host" "mkdir -p $(dirname $remote_path)" || {
+            print_error "Failed to create directory on remote host"
+            return 1
+        }
+    fi
     
-    # Copy the script
+    # Copy the script - use sudo for system paths
     echo "Copying warpclip script..."
-    scp "$script_path" "$target_host:$remote_path" || {
-        print_error "Failed to copy script to remote host"
-        return 1
-    }
+    if [[ "$remote_path" == "/usr/local/bin/warpclip" || "$remote_path" == /opt/homebrew/bin/warpclip || "$remote_path" =~ ^/usr/local/Cellar || "$remote_path" =~ ^/opt/homebrew/Cellar ]]; then
+        # System paths that likely need sudo - copy to temp first, then sudo move
+        local remote_tmp_path="/tmp/warpclip.tmp"
+        scp "$script_path" "$target_host:$remote_tmp_path" && 
+        ssh "$target_host" "sudo mv $remote_tmp_path $remote_path" || {
+            print_error "Failed to copy script to remote host (sudo required)"
+            print_warning "If you don't have sudo access, try again with '--path ~/bin/warpclip'"
+            return 1
+        }
+    else
+        # User paths that shouldn't need sudo
+        scp "$script_path" "$target_host:$remote_path" || {
+            print_error "Failed to copy script to remote host"
+            return 1
+        }
+    fi
     
-    # Make it executable
+    # Make it executable - use sudo for system paths
     echo "Setting permissions..."
-    ssh "$target_host" "chmod +x $remote_path" || {
-        print_error "Failed to set executable permissions"
-        return 1
-    }
+    if [[ "$remote_path" == "/usr/local/bin/warpclip" || "$remote_path" == /opt/homebrew/bin/warpclip || "$remote_path" =~ ^/usr/local/Cellar || "$remote_path" =~ ^/opt/homebrew/Cellar ]]; then
+        # System paths that likely need sudo
+        ssh "$target_host" "sudo chmod +x $remote_path" || {
+            print_error "Failed to set executable permissions (sudo required)"
+            return 1
+        }
+    else
+        # User paths that shouldn't need sudo
+        ssh "$target_host" "chmod +x $remote_path" || {
+            print_error "Failed to set executable permissions"
+            return 1
+        }
+    fi
     
     # Check if the installation directory is in PATH
     local in_path=false
