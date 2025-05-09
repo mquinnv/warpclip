@@ -21,16 +21,18 @@ class Warpclip < Formula
     # Install the server daemon
     bin.install "src/warpclipd"
     
-    # Update version and ensure proper localhost binding for both IPv4 and IPv6
+    # Update version and ensure proper localhost binding
     inreplace bin/"warpclipd" do |s|
       s.gsub!(/^VERSION=.*$/, %Q(VERSION="#{version}"))
       
-      # Update BIND_ADDRESS to handle both IPv4 and IPv6
-      s.gsub!(/^BIND_ADDRESS=.*$/, 'BIND_ADDRESS="localhost"')
+      # Use simpler netcat command that works reliably on macOS
+      s.gsub!(/timeout \$CONNECTION_TIMEOUT nc.*\$PORT/, 'nc -l localhost $PORT')
+      s.gsub!(/gtimeout \$CONNECTION_TIMEOUT nc.*\$PORT/, 'nc -l localhost $PORT')
+      s.gsub!(/nc -[kl].*\$PORT/, 'nc -l localhost $PORT')
       
-      # Use localhost instead of explicit IP to handle both IPv4 and IPv6
-      s.gsub!(/nc -k -l (\$BIND_ADDRESS|\"\$BIND_ADDRESS\"|127\.0\.0\.1) \$PORT/, 'nc -k -l localhost $PORT')
-      s.gsub!(/nc -l (\$BIND_ADDRESS|\"\$BIND_ADDRESS\"|127\.0\.0\.1) \$PORT/, 'nc -l localhost $PORT')
+      # Ensure consistent port configuration
+      s.gsub!(/^PORT=.*$/, 'PORT="8888"')
+      s.gsub!(/^BIND_ADDRESS=.*$/, 'BIND_ADDRESS="localhost"')
     end
     
     # Set the proper permissions
