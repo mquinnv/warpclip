@@ -123,7 +123,8 @@ ${BOLD}COMMANDS:${NC}
 
 ${BOLD}OPTIONS:${NC}
   ${BOLD}--port, -p${NC} PORT       Specify custom port (default: $PORT)
-  ${BOLD}--path${NC} PATH           Remote installation path (with install-remote command)
+  ${BOLD}--path${NC} PATH           Remote installation path (default: ~/bin/warpclip)
+  ${BOLD}--no-path-setup${NC}       Skip adding ~/bin to PATH in shell configuration files
   ${BOLD}--help, -h${NC}            Show help message
   ${BOLD}--version, -v${NC}         Show version information
 
@@ -148,6 +149,9 @@ ${BOLD}EXAMPLES:${NC}
   
   # Install with custom remote path
   warpclip install-remote user@remote-server --path /usr/local/bin/warpclip
+  
+  # Install without modifying PATH
+  warpclip install-remote user@remote-server --no-path-setup
 
 ${BOLD}NOTES:${NC}
   WarpClip requires SSH port forwarding to be set up in your SSH configuration.
@@ -156,6 +160,9 @@ ${BOLD}NOTES:${NC}
   Your ~/.ssh/config should contain:
     Host *
         RemoteForward $PORT localhost:$LOCAL_PORT
+        
+  By default, the script is installed to ~/bin/warpclip on the remote server
+  and the directory is added to PATH in the appropriate shell configuration file.
 
 ${BOLD}For more information, see:${NC} https://github.com/mquinnv/warpclip
 EOF
@@ -203,6 +210,7 @@ cmd_copy() {
 cmd_install_remote() {
     local target_host=""
     local remote_path="$REMOTE_INSTALL_PATH"
+    local setup_path=true
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -210,6 +218,10 @@ cmd_install_remote() {
             --path)
                 remote_path="$2"
                 shift 2
+                ;;
+            --no-path-setup)
+                setup_path=false
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -231,7 +243,7 @@ cmd_install_remote() {
     
     if [[ -z "$target_host" ]]; then
         print_error "Please specify a target host"
-        echo "Usage: warpclip install-remote user@host [--path REMOTE_PATH]"
+        echo "Usage: warpclip install-remote user@host [--path REMOTE_PATH] [--no-path-setup]"
         return 1
     fi
     
@@ -246,8 +258,8 @@ cmd_install_remote() {
         return 1
     fi
     
-    echo "Installing from: $script_path"
-    echo "Installing to:   $target_host:$remote_path"
+    echo -e "Installing from: ${BOLD}$script_path${NC}"
+    echo -e "Installing to:   ${BOLD}$target_host:$remote_path${NC}"
     echo ""
     
     # Create the directory on the remote host
@@ -271,11 +283,71 @@ cmd_install_remote() {
         return 1
     }
     
+    # Check if the installation directory is in PATH
+    local in_path=false
+    local remote_dir=$(dirname "$remote_path")
+    
+    echo "Checking if installation directory is in PATH..."
+    if ssh "$target_host" "echo \$PATH | grep -q \"${remote_dir}\""; then
+        print_success "Installation directory is already in PATH"
+        in_path=true
+    else
+        if [[ "$setup_path" == "true" ]]; then
+            echo "Adding installation directory to PATH..."
+            
+            # Try to detect shell and configure PATH
+            local shell_rc=""
+            if ssh "$target_host" "[ -f ~/.bashrc ]"; then
+                shell_rc="~/.bashrc"
+                print_success "Found ~/.bashrc"
+            elif ssh "$target_host" "[ -f ~/.zshrc ]"; then
+                shell_rc="~/.zshrc"
+                print_success "Found ~/.zshrc"
+            elif ssh "$target_host" "[ -f ~/.profile ]"; then
+                shell_rc="~/.profile"
+                print_success "Found ~/.profile"
+            else
+                print_warning "Could not find shell configuration file"
+                print_warning "You may need to add ${remote_dir} to your PATH manually"
+            fi
+            
+            if [[ -n "$shell_rc" ]]; then
+                # Add PATH entry to shell rc file
+                ssh "$target_host" "echo 'export PATH=\"${remote_dir}:\$PATH\"' >> $shell_rc" || {
+                    print_warning "Failed to update shell configuration"
+                    print_warning "You may need to add ${remote_dir} to your PATH manually"
+                }
+                print_success "Added ${remote_dir} to PATH in $shell_rc"
+                print_warning "You will need to restart your shell or run 'source $shell_rc' for PATH changes to take effect"
+            fi
+        else
+            print_warning "Installation directory is not in PATH"
+            print_warning "You may need to either:"
+            echo "  1. Add ${remote_dir} to your PATH manually"
+            echo "  2. Use the full path to run warpclip: ${remote_path}"
+        fi
+    fi
+    
+    # Test if warpclip works
+    echo ""
+    echo "Testing warpclip installation..."
+    if ssh "$target_host" "$remote_path --version" &>/dev/null; then
+        print_success "WarpClip test successful!"
+    else
+        print_warning "WarpClip test failed. You may need to add ${remote_dir} to your PATH manually"
+    fi
+    
     # Success
+    echo ""
     print_success "WarpClip installed successfully on $target_host!"
     echo ""
     echo "You can now use it on the remote server:"
-    echo "  ${BOLD}cat file.txt | $remote_path${NC}"
+    
+    if [[ "$in_path" == "true" || "$setup_path" == "true" ]]; then
+        echo "  ${BOLD}cat file.txt | warpclip${NC}"
+    else
+        echo "  ${BOLD}cat file.txt | $remote_path${NC}"
+    fi
     
     # Check if SSH config has the forwarding set up
     echo ""
