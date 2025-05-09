@@ -1,0 +1,16 @@
+WarpClip Logo Placeholder
+
+This file is a placeholder for the WarpClip logo.
+
+For the actual project, you should replace this with a proper logo image (PNG format)
+and update the README.md to reference the correct image path.
+
+Suggested logo specifications:
+- Format: PNG with transparency
+- Size: At least 500x500 pixels
+- Style: Simple, modern icon representing clipboard/copying concept
+- Colors: Use colors that work on both light and dark backgrounds
+
+The logo path referenced in the README is:
+https://raw.githubusercontent.com/michael/warpclip/assets/logo.png
+

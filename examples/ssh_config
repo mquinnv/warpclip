@@ -1,0 +1,13 @@
+# Host example.com
+#     RemoteForward 9999 localhost:8888
+
+# Option 3: Apply to a group of hosts
+# Host *.example.org example.net
+#     RemoteForward 9999 localhost:8888
+
+# Option 4: Use a different port
+# Host special-server
+#     RemoteForward 12345 localhost:8888
+#     # Note: You'll need to specify the port when using warp-copy:
+#     # warp-copy --port 12345 < file.txt
+
