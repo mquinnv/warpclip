@@ -2,7 +2,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/mquinnv/warpclip/releases)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mquinnv/warpclip/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
 [![Homebrew](https://img.shields.io/badge/homebrew-coming%20soon-orange.svg)]()
@@ -20,7 +20,7 @@ WarpClip creates a seamless bridge between your remote SSH sessions and your loc
 
 ```bash
 # On a remote server
-cat remote_file.txt | warp-copy
+cat remote_file.txt | warpclip
 ```
 
 Instantly, the content of `remote_file.txt` appears in your local clipboard, ready to paste anywhere on your macOS machine.
@@ -33,14 +33,16 @@ Instantly, the content of `remote_file.txt` appears in your local clipboard, rea
 - **⚡ Near-Zero Latency**: Copies happen almost instantly, even over slow connections
 - **📊 Status Monitoring**: Check service status and view copy history
 - **🔄 Persistent Service**: Runs in the background and auto-restarts if needed
-- **🧩 Portable**: Remote script works on almost any Linux/Unix system
+- **🧩 Portable**: Go-based remote client works on almost any Linux/Unix system without dependencies
+- **⚙️ Robust**: Signal handling and error recovery for reliable operation
 
 ## 🔍 Requirements
 
 - **macOS** (uses `pbcopy` for clipboard operations)
-- **Bash 3.2+**
 - **SSH client** with port forwarding capabilities
-- **Netcat (`nc`)** on both local and remote machines
+- **Go 1.18+** (only if building from source)
+
+> **Note:** As of version 2.1.0, the remote client is written in Go and no longer requires netcat!
 
 ## 🚀 Installation
 
@@ -59,6 +61,10 @@ brew install mquinnv/tap/warpclip
 # Clone the repository
 git clone https://github.com/mquinnv/warpclip.git
 cd warpclip
+
+# Build the Go binaries
+go build -o bin/warpclip cmd/warpclip/main.go
+go build -o bin/warpclipd cmd/warpclipd/main.go
 
 # Run the installer
 ./install.sh
@@ -102,24 +108,26 @@ If you prefer to install components manually:
        RemoteForward 9999 localhost:8888
    ```
 
-5. **Copy the remote script for future use:**
+5. **Copy the remote client for future use:**
 
    ```bash
-   cp src/warp-copy ~/bin/
+   cp bin/warpclip ~/bin/
    ```
+
+> **Note:** The client is now a compiled Go binary instead of a shell script.
 
 ## 🛠️ How to Use
 
 ### Setting Up a Remote Server
 
-Before you can use WarpClip on a remote server, you need to copy the `warp-copy` script to that server:
+Before you can use WarpClip on a remote server, you need to copy the `warpclip` binary to that server:
 
 ```bash
-# Copy the script to your remote server
-scp ~/bin/warp-copy user@remote-server:~/bin/
+# Copy the binary to your remote server
+scp ~/bin/warpclip user@remote-server:~/bin/
 
-# Make it executable
-ssh user@remote-server "chmod +x ~/bin/warp-copy"
+# Make it executable (if needed)
+ssh user@remote-server "chmod +x ~/bin/warpclip"
 ```
 
 ### Copying Content to Your Clipboard
@@ -127,17 +135,17 @@ ssh user@remote-server "chmod +x ~/bin/warp-copy"
 Once the script is on your remote server, you can use it to copy content:
 
 ```bash
-# Pipe content to warp-copy
-cat file.txt | warp-copy
+# Pipe content to warpclip
+cat file.txt | warpclip
 
 # Or redirect input
-warp-copy < file.txt
+warpclip < file.txt
 
 # Copy command output directly
-grep "important" large-log.txt | warp-copy
+grep "important" large-log.txt | warpclip
 
 # Copy multiline output
-find . -name "*.js" | warp-copy
+find . -name "*.js" | warpclip
 ```
 
 The content will be instantly available in your local clipboard!
@@ -146,11 +154,13 @@ The content will be instantly available in your local clipboard!
 
 WarpClip consists of three main components:
 
-1. **Local Server**: A persistent service that runs on your Mac and listens on port 8888
+1. **Local Server**: A persistent Go service (`warpclipd`) that runs on your Mac and listens on port 8888
 2. **SSH Tunnel**: Automatically set up when you connect to a remote server, forwarding port 9999 on the remote to port 8888 on your local machine
-3. **Remote Client**: The `warp-copy` script that sends data to the forwarded port
+3. **Remote Client**: The `warpclip` Go binary that sends data to the forwarded port
 
-When you pipe content to `warp-copy` on a remote server, it securely transmits the data through the SSH tunnel to your local WarpClip server, which then copies it to your clipboard using `pbcopy`.
+When you pipe content to `warpclip` on a remote server, it securely transmits the data through the SSH tunnel to your local WarpClip server, which then copies it to your clipboard using `pbcopy`.
+
+> **Version 2.1.0 Update:** The remote client has been completely rewritten in Go, eliminating the need for netcat and providing improved error handling, signal management, and reliability.
 
 ## 🔧 Troubleshooting
 
@@ -194,9 +204,9 @@ This usually means the SSH port forwarding isn't set up correctly. Check your SS
 **No Data Copied**
 
 If data isn't appearing in your clipboard, check:
-- Is the WarpClip service running? (`~/bin/warpclip-server.sh status`)
+- Is the WarpClip service running? (`~/bin/warpclip-server.sh status` or `warpclipd status`)
 - Did you connect to the server with SSH port forwarding enabled?
-- Is netcat (`nc`) installed on the remote server?
+- Is the connection timing out? Check for firewall issues or network connectivity problems.
 
 ## 🔐 Security Considerations
 
@@ -221,7 +231,7 @@ When using WarpClip, be aware of these clipboard-related security considerations
 The default configuration uses automatic port forwarding for all SSH connections, which has some implications:
 
 - Anyone with access to a remote server could potentially send data to your clipboard
-- The `warp-copy` script doesn't encrypt data before sending it (relies on SSH encryption)
+- The `warpclip` client doesn't encrypt data before sending it (relies on SSH encryption)
 - Clipboard tunneling works even from jump hosts or nested SSH sessions
 
 For enhanced security:
@@ -261,9 +271,11 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ### Coding Standards
 
-- Keep shell scripts POSIX-compatible where possible
-- Include error handling for edge cases
+- Follow Go best practices and idioms for Go code
+- Use standard Go formatting (`go fmt`)
+- Include comprehensive error handling
 - Add comments for complex operations
+- Write tests for critical components
 - Update documentation when adding features
 
 ## 📝 License
