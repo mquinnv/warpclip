@@ -2,7 +2,7 @@ class Warpclip < Formula
   desc "Remote-to-local clipboard integration for terminal users"
   homepage "https://github.com/mquinnv/warpclip"
   url "https://github.com/mquinnv/warpclip/archive/refs/tags/v1.1.0.tar.gz"
-  sha256 "bf1c5d9cb185ee89abff52d04819470983cd2ef5e89ca460b1eecc99f8e20fe1"
+  sha256 "cdafa472c164993879bc7c070771c907b3a8f31a689645b11fd79fbf0ddadc30"
   license "MIT"
   head "https://github.com/mquinnv/warpclip.git", branch: "main"
 
@@ -178,4 +178,3 @@ Host *
     assert_match "warpclip server", shell_output("head -n 10 #{opt_bin}/warpclipd")
   end
 end
-
