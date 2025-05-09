@@ -56,33 +56,63 @@ class Warpclip < Formula
   def setup_ssh_config
     ssh_config_path = "#{Dir.home}/.ssh/config"
     ssh_dir = "#{Dir.home}/.ssh"
+    success = true
 
-    # Create .ssh directory if it doesn't exist, and set secure permissions only if we create it
+    # First check if RemoteForward is already configured before making any changes
+    if File.exist?(ssh_config_path) && File.readable?(ssh_config_path)
+      config_content = File.read(ssh_config_path) rescue ""
+      if config_content.include?("RemoteForward 9999 localhost:8888")
+        ohai "SSH RemoteForward already configured in #{ssh_config_path}"
+        return true
+      end
+    end
+
+    # Create .ssh directory if it doesn't exist
     if !Dir.exist?(ssh_dir)
-      mkdir_p ssh_dir
-      # Only set permissions on newly created directory
       begin
+        mkdir_p ssh_dir
+        # Only set permissions on newly created directory
         chmod 0700, ssh_dir
-      rescue Errno::EPERM
-        opoo "Could not set permissions on #{ssh_dir}. This is not critical."
+        ohai "Created SSH directory at #{ssh_dir}"
+      rescue => e
+        opoo "Could not create or set permissions on #{ssh_dir}: #{e.message}"
+        opoo "You may need to manually configure SSH forwarding."
+        success = false
       end
     end
 
-    # Create config file if it doesn't exist, and set permissions only if we create it
+    # Skip further steps if we couldn't set up the directory
+    return false unless Dir.exist?(ssh_dir)
+
+    # Create config file if it doesn't exist
     if !File.exist?(ssh_config_path)
-      touch ssh_config_path
       begin
+        touch ssh_config_path
         chmod 0600, ssh_config_path
-      rescue Errno::EPERM
-        opoo "Could not set permissions on #{ssh_config_path}. This is not critical."
+        ohai "Created SSH config at #{ssh_config_path}"
+      rescue => e
+        opoo "Could not create or set permissions on #{ssh_config_path}: #{e.message}"
+        opoo "You may need to manually configure SSH forwarding."
+        success = false
       end
     end
 
-    # Check if RemoteForward entry exists
-    config_content = File.read(ssh_config_path)
+    # Skip if we can't read/write the config file
+    return false unless File.readable?(ssh_config_path) && File.writable?(ssh_config_path)
 
+    # Read current config content
+    config_content = ""
+    begin
+      config_content = File.read(ssh_config_path)
+    rescue => e
+      opoo "Could not read SSH config: #{e.message}"
+      return false
+    end
+
+    # Check if RemoteForward entry already exists
     if config_content.include?("RemoteForward 9999 localhost:8888")
-      ohai "SSH RemoteForward already configured"
+      ohai "SSH RemoteForward already configured in #{ssh_config_path}"
+      return true
     else
       # Back up existing config first
       backup_path = "#{ssh_config_path}.backup-#{Time.now.strftime("%Y%m%d%H%M%S")}"
@@ -99,17 +129,48 @@ class Warpclip < Formula
 Host *
     RemoteForward 9999 localhost:8888
       }.strip
-
+      modified = false
       begin
         File.open(ssh_config_path, "a") do |file|
           file.puts("\n#{forward_config}\n")
         end
+        modified = true
         ohai "Added RemoteForward configuration to SSH config"
       rescue => e
-        opoo "Could not modify SSH config: #{e.message}. You may need to add the RemoteForward configuration manually."
+        opoo "Could not modify SSH config: #{e.message}"
+        opoo "You may need to add the RemoteForward configuration manually:"
+        puts "  #{forward_config}"
+        success = false
       end
 
+      # Verify the configuration was actually added
+      if modified
+        begin
+          new_content = File.read(ssh_config_path)
+          if new_content.include?("RemoteForward 9999 localhost:8888")
+            ohai "Verified SSH RemoteForward configuration was added successfully"
+          else
+            opoo "Failed to verify SSH config was updated. You may need to add it manually:"
+            puts "  #{forward_config}"
+            success = false
+          end
+        rescue => e
+          opoo "Could not verify SSH config: #{e.message}"
+          success = false
+        end
+      end
     end
+
+    if success
+      ohai "SSH configuration completed successfully"
+    else
+      opoo "SSH configuration may not be complete. Check the messages above."
+      opoo "WarpClip will still work if you manually configure SSH forwarding with:"
+      puts "  RemoteForward 9999 localhost:8888"
+    end
+    
+    # Return true even with warnings - this will allow post-install to continue
+    true
   end
 
   # Define the service plist
