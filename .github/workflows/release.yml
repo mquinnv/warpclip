@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Check script syntax
+        run: |
+          bash -n src/warpclip-server.sh
+          bash -n src/warp-copy
+          bash -n install.sh
+      
+      - name: Run basic tests
+        run: |
+          chmod +x src/warpclip-server.sh
+          chmod +x src/warp-copy
+          ./src/warpclip-server.sh status || true
+          
+  build:
+    name: Build & Release
+    needs: test
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          
+      - name: Create Release Archive
+        id: create_archive
+        run: |
+          # Create archive directory
+          mkdir -p dist
+          
+          # Create tarball
+          tar -czf dist/warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'dist' \
+            .
+          
+          # Calculate SHA256 hash
+          cd dist
+          SHA256=$(shasum -a 256 warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "Archive SHA256: $SHA256"
+          
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: WarpClip ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          body: |
+            # WarpClip ${{ steps.get_version.outputs.VERSION }}
+            
+            Remote-to-local clipboard integration for Warp terminal users.
+            
+            ## Installation
+            
+            ```bash
+            # Install via Homebrew
+            brew install mquinnv/tap/warpclip
+            ```
+            
+            ## SHA256 Hash
+            
+            ```
+            ${{ steps.create_archive.outputs.SHA256 }}
+            ```
+            
+            ## Manual Installation
+            
+            ```bash
+            # Clone the repository
+            git clone https://github.com/mquinnv/warpclip.git
+            cd warpclip
+            
+            # Run the installer
+            ./install.sh
+            ```
+
+      - name: Update Homebrew Formula
+        run: |
+          # Get the version and SHA256
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          SHA256="${{ steps.create_archive.outputs.SHA256 }}"
+          
+          # Update formula file
+          sed -i '' "s|url \".*\"|url \"https://github.com/mquinnv/warpclip/archive/refs/tags/v${VERSION}.tar.gz\"|" Formula/warpclip.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/warpclip.rb
+          
+          # Configure Git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Commit and push formula changes
+          git add Formula/warpclip.rb
+          git commit -m "Update formula to v${VERSION}"
+          git push
+
