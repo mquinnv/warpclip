@@ -46,10 +46,10 @@ Instantly, the content of `remote_file.txt` appears in your local clipboard, rea
 
 ## 🚀 Installation
 
-### Homebrew Installation (Coming Soon)
+### Homebrew Installation 
 
 ```bash
-# Install via Homebrew (coming soon)
+# Install via Homebrew 
 brew install mquinnv/tap/warpclip
 
 # This will automatically set up all components
