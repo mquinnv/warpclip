@@ -60,7 +60,11 @@ class Warpclip < Formula
 
     # First check if RemoteForward is already configured before making any changes
     if File.exist?(ssh_config_path) && File.readable?(ssh_config_path)
-      config_content = File.read(ssh_config_path) rescue ""
+      begin
+        config_content = File.read(ssh_config_path)
+      rescue StandardError
+        config_content = ""
+      end
       if config_content.include?("RemoteForward 9999 localhost:8888")
         ohai "SSH RemoteForward already configured in #{ssh_config_path}"
         return true
@@ -68,7 +72,7 @@ class Warpclip < Formula
     end
 
     # Create .ssh directory if it doesn't exist
-    if !Dir.exist?(ssh_dir)
+    unless Dir.exist?(ssh_dir)
       begin
         mkdir_p ssh_dir
         # Only set permissions on newly created directory
@@ -85,7 +89,7 @@ class Warpclip < Formula
     return false unless Dir.exist?(ssh_dir)
 
     # Create config file if it doesn't exist
-    if !File.exist?(ssh_config_path)
+    unless File.exist?(ssh_config_path)
       begin
         touch ssh_config_path
         chmod 0600, ssh_config_path
@@ -98,7 +102,8 @@ class Warpclip < Formula
     end
 
     # Skip if we can't read/write the config file
-    return false unless File.readable?(ssh_config_path) && File.writable?(ssh_config_path)
+    return false unless File.readable?(ssh_config_path)
+    return false unless File.writable?(ssh_config_path)
 
     # Read current config content
     config_content = ""
@@ -117,7 +122,7 @@ class Warpclip < Formula
       # Back up existing config first
       backup_path = "#{ssh_config_path}.backup-#{Time.now.strftime("%Y%m%d%H%M%S")}"
       begin
-        FileUtils.cp ssh_config_path, backup_path
+        cp ssh_config_path, backup_path
         ohai "Backed up existing SSH config to #{backup_path}"
       rescue => e
         opoo "Could not back up SSH config: #{e.message}. Will continue without backup."
@@ -168,7 +173,6 @@ Host *
       opoo "WarpClip will still work if you manually configure SSH forwarding with:"
       puts "  RemoteForward 9999 localhost:8888"
     end
-    
     # Return true even with warnings - this will allow post-install to continue
     true
   end
@@ -177,9 +181,9 @@ Host *
   service do
     run [opt_bin/"warpclipd"]
     keep_alive true
-    log_path "#{Dir.home.to_s}/.warpclip.out.log"
-    error_log_path "#{Dir.home.to_s}/.warpclip.error.log"
-    working_dir Dir.home.to_s
+    log_path "#{Dir.home}/.warpclip.out.log"
+    error_log_path "#{Dir.home}/.warpclip.error.log"
+    working_dir Dir.home
     environment_variables PATH: "#{HOMEBREW_PREFIX}/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
     # Restart if the process exits for any reason
