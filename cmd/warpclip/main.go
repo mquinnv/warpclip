@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	Version = "2.1.0" // Increment from previous warp-copy version (1.0.0) and warpclipd (2.0.0)
+	Version = "2.1.0" // Increment from previous warpclip version (1.0.0) and warpclipd (2.0.0)
 	DefaultPort = 9999
 	Timeout = 5 * time.Second
 )
@@ -39,15 +40,9 @@ func main() {
 		os.Exit(0)
 	}
 	
-// Check if we have any input
-	if isEmpty(os.Stdin) {
-		fmt.Fprintln(os.Stderr, "Error: No input provided. Please provide content via stdin.")
-		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintln(os.Stderr, "  cat file.txt | warp-copy")
-		fmt.Fprintln(os.Stderr, "  echo 'text' | warp-copy")
-		fmt.Fprintln(os.Stderr, "  warp-copy < file.txt")
-		os.Exit(1)
-	}
+// We're going to skip the isEmpty check to avoid consuming stdin data
+// This check was causing problems because it consumed data from stdin
+// that was then not available to sendToClipboard
 
 	// Check if SSH tunnel is available
 	if !checkTunnel(port) {
@@ -146,6 +141,28 @@ func isEmpty(r io.Reader) bool {
 
 // sendToClipboard sends data from stdin to the clipboard service
 func sendToClipboard(ctx context.Context, port int) error {
+    // Read all input into a buffer first (simpler and more reliable)
+    var buf bytes.Buffer
+    _, err := io.Copy(&buf, os.Stdin)
+    if err != nil {
+        return fmt.Errorf("error reading stdin: %w", err)
+    }
+    
+    data := buf.Bytes()
+    
+    // Print debug information
+    fmt.Fprintf(os.Stderr, "Read %d bytes from stdin\n", len(data))
+    
+    // Verify we have data
+    if len(data) == 0 {
+        fmt.Fprintln(os.Stderr, "Error: No input provided. Please provide content via stdin.")
+        fmt.Fprintln(os.Stderr, "Examples:")
+        fmt.Fprintln(os.Stderr, "  cat file.txt | warpclip")
+        fmt.Fprintln(os.Stderr, "  echo 'text' | warpclip")
+        fmt.Fprintln(os.Stderr, "  warpclip < file.txt")
+        return fmt.Errorf("no data received from stdin")
+    }
+	
 	// Set up the connection with timeout
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), Timeout)
 	if err != nil {
@@ -153,53 +170,30 @@ func sendToClipboard(ctx context.Context, port int) error {
 	}
 	defer conn.Close()
 	
-	// Set deadline for the entire operation
+	// Set deadlines for writing
 	deadline := time.Now().Add(Timeout)
-	if err := conn.SetDeadline(deadline); err != nil {
-		return fmt.Errorf("failed to set connection deadline: %w", err)
+	if err := conn.SetWriteDeadline(deadline); err != nil {
+		return fmt.Errorf("failed to set write deadline: %w", err)
 	}
 	
-	// Create a pipe for coordinated reading and writing
-	pr, pw := io.Pipe()
-	defer pr.Close()
-	defer pw.Close()
+	// Write data directly for simplicity
+    fmt.Fprintf(os.Stderr, "Sending %d bytes to clipboard...\n", len(data))
+    if _, err := conn.Write(data); err != nil {
+        return fmt.Errorf("failed to write data: %w", err)
+    }
 	
-	// Create a channel to capture errors from the goroutine
-	errCh := make(chan error, 1)
+	// Try to close write side if this is a TCPConn
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		tcpConn.CloseWrite()
+	}
 	
-	// Start a goroutine to copy data from stdin to the pipe
-	go func() {
-		_, err := io.Copy(pw, os.Stdin)
-		if err != nil {
-			errCh <- fmt.Errorf("failed to read from stdin: %w", err)
-		}
-		pw.Close()
-		errCh <- nil
-	}()
-	
-	// Copy data from the pipe reader to the network connection
-	copyDone := make(chan error, 1)
-	go func() {
-		_, err := io.Copy(conn, pr)
-		if err != nil {
-			copyDone <- fmt.Errorf("failed to send data: %w", err)
-		}
-		copyDone <- nil
-	}()
-	
-	// Wait for either completion, error, or context cancellation
+	// Wait for either completion or context cancellation
 	select {
-	case err := <-errCh:
-		if err != nil {
-			return err
-		}
-		// Wait for copy to complete
-		return <-copyDone
-	case err := <-copyDone:
-		return err
 	case <-ctx.Done():
-		// Context canceled (probably due to a signal)
 		return fmt.Errorf("operation canceled")
+	default:
+		// Operation completed successfully
+		return nil
 	}
 }
 
@@ -215,8 +209,8 @@ func getHostname() string {
 // printHelp prints the help message
 func printHelp() {
 	fmt.Printf("WarpClip Remote Client v%s\n", Version)
-	fmt.Println("Usage: cat file.txt | warp-copy [options]")
-	fmt.Println("   or: warp-copy [options] < file.txt")
+	fmt.Println("Usage: cat file.txt | warpclip [options]")
+	fmt.Println("   or: warpclip [options] < file.txt")
 	fmt.Println("")
 	fmt.Println("Options:")
 	fmt.Println("  --port, -p PORT    Specify custom port (default: 9999)")

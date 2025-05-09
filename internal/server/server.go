@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -22,6 +23,10 @@ type Server struct {
 	listener       net.Listener
 	activeConns    sync.WaitGroup
 	shutdownSignal chan struct{}
+	
+	// Track connections by remote address to handle multiple connections
+	connMutex      sync.Mutex
+	activeAddrs    map[string]time.Time
 }
 
 // New creates a new Server instance
@@ -30,6 +35,7 @@ func New(cfg *config.Config, logger log.Logger) *Server {
 		cfg:            cfg,
 		logger:         logger,
 		shutdownSignal: make(chan struct{}),
+		activeAddrs:    make(map[string]time.Time),
 	}
 }
 
@@ -117,50 +123,119 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	s.logger.Info(fmt.Sprintf("New connection from %s", conn.RemoteAddr()))
+	remoteAddr := conn.RemoteAddr().String()
+	s.logger.Info(fmt.Sprintf("New connection from %s", remoteAddr))
 
-	// Set a deadline to prevent hanging connections
-	err := conn.SetDeadline(time.Now().Add(2 * time.Hour)) // 2 hour timeout
+	// Set read deadline to prevent hanging
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		s.logger.Error(fmt.Sprintf("Failed to set read deadline: %v", err))
+		return
+	}
+
+	// Create a buffer with some capacity to avoid reallocations
+	buf := make([]byte, 1024)
+	var data []byte
+
+	// Read the first chunk
+	n, err := conn.Read(buf)
 	if err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to set deadline: %v", err))
+		if err != io.EOF {
+			s.logger.Error(fmt.Sprintf("Error reading initial data: %v", err))
+		} else {
+			// EOF on first read means this is likely the control connection
+			s.logger.Info(fmt.Sprintf("Control connection from %s (no data), closing", remoteAddr))
+		}
 		return
 	}
 
-	// Limit the read size to prevent memory exhaustion
-	limitReader := io.LimitReader(conn, s.cfg.MaxDataSize)
+	// If we got data in the first read, this is our data connection
+	if n > 0 {
+		data = append(data, buf[:n]...)
 
-	// Read all data from the connection
-	data, err := io.ReadAll(limitReader)
-	if err != nil {
-		s.logger.Error(fmt.Sprintf("Error reading data: %v", err))
-		return
+		// Continue reading until EOF or error (up to size limit)
+		totalRead := int64(n)
+		for totalRead < s.cfg.MaxDataSize {
+			n, err = conn.Read(buf)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				s.logger.Error(fmt.Sprintf("Error reading data: %v", err))
+				return
+			}
+			if n > 0 {
+				data = append(data, buf[:n]...)
+				totalRead += int64(n)
+			}
+		}
+
+		// Process the data
+		if len(data) > 0 {
+			// Check if we hit the size limit
+			if totalRead >= s.cfg.MaxDataSize {
+				s.logger.Warning(fmt.Sprintf("Data exceeded maximum size limit (%d bytes), truncated", s.cfg.MaxDataSize))
+			}
+
+			// Copy data to clipboard
+			if err := s.copyToClipboard(data); err != nil {
+				s.logger.Error(fmt.Sprintf("Failed to copy to clipboard: %v", err))
+				return
+			}
+
+			// Update last activity file
+			if err := s.updateLastActivityFile(len(data)); err != nil {
+				s.logger.Warning(fmt.Sprintf("Failed to update last activity file: %v", err))
+			}
+
+			s.logger.Info(fmt.Sprintf("Successfully copied %d bytes to clipboard", len(data)))
+		} else {
+			s.logger.Warning("Received empty data, nothing to copy")
+		}
+	} else {
+		// Empty first read (0 bytes) - likely secondary connection
+		s.logger.Info(fmt.Sprintf("Secondary connection from %s (empty read), closing", remoteAddr))
 	}
+}
 
-	if len(data) == 0 {
-		s.logger.Warning("Received empty data, nothing to copy")
-		return
+// cleanupOldConnections removes stale connection records periodically
+func (s *Server) cleanupOldConnections() {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+	
+	now := time.Now()
+	for addr, timestamp := range s.activeAddrs {
+		if now.Sub(timestamp) > 30*time.Second {
+			delete(s.activeAddrs, addr)
+		}
 	}
-
-	if int64(len(data)) >= s.cfg.MaxDataSize {
-		s.logger.Warning(fmt.Sprintf("Data exceeded maximum size limit (%d bytes), truncated", s.cfg.MaxDataSize))
-	}
-
-	// Copy data to clipboard
-	if err := s.copyToClipboard(data); err != nil {
-		s.logger.Error(fmt.Sprintf("Failed to copy to clipboard: %v", err))
-		return
-	}
-
-	// Update last activity file
-	if err := s.updateLastActivityFile(len(data)); err != nil {
-		s.logger.Warning(fmt.Sprintf("Failed to update last activity file: %v", err))
-	}
-
-	s.logger.Info(fmt.Sprintf("Successfully copied %d bytes to clipboard", len(data)))
 }
 
 // copyToClipboard copies data to the system clipboard using pbcopy
 func (s *Server) copyToClipboard(data []byte) error {
+	// Add retry logic for reliability
+	maxRetries := 3
+	var lastErr error
+	
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			s.logger.Warning(fmt.Sprintf("Retrying clipboard operation (attempt %d/%d)", attempt+1, maxRetries))
+			time.Sleep(time.Duration(100*attempt) * time.Millisecond) // Backoff
+		}
+		
+		if err := s.copyToClipboardOnce(data); err != nil {
+			lastErr = err
+			s.logger.Warning(fmt.Sprintf("Clipboard operation failed: %v", err))
+			continue
+		}
+		
+		return nil // Success
+	}
+	
+	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+}
+
+// copyToClipboardOnce performs a single clipboard operation
+func (s *Server) copyToClipboardOnce(data []byte) error {
 	// Create pbcopy command
 	cmd := exec.Command("pbcopy")
 	
@@ -175,11 +250,20 @@ func (s *Server) copyToClipboard(data []byte) error {
 		return fmt.Errorf("failed to start pbcopy: %w", err)
 	}
 	
+	// Create a buffered writer for better performance
+	writer := bufio.NewWriter(stdin)
+	
 	// Write data to stdin
-	_, err = stdin.Write(data)
+	_, err = writer.Write(data)
 	if err != nil {
 		stdin.Close()
 		return fmt.Errorf("failed to write data to pbcopy: %w", err)
+	}
+	
+	// Flush the buffer
+	if err := writer.Flush(); err != nil {
+		stdin.Close()
+		return fmt.Errorf("failed to flush data to pbcopy: %w", err)
 	}
 	
 	// Close stdin
@@ -187,9 +271,22 @@ func (s *Server) copyToClipboard(data []byte) error {
 		return fmt.Errorf("failed to close stdin: %w", err)
 	}
 	
-	// Wait for the command to finish
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("pbcopy command failed: %w", err)
+	// Wait for the command to finish with timeout
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	
+	// Wait for completion or timeout
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("pbcopy command failed: %w", err)
+		}
+	case <-time.After(5 * time.Second):
+		// Kill the process if it takes too long
+		cmd.Process.Kill()
+		return fmt.Errorf("pbcopy operation timed out after 5 seconds")
 	}
 	
 	return nil
