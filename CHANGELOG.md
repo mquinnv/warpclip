@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.1.0] - 2025-05-09
+
+### Fixed
+- Resolved issues with double connections from SSH port forwarding
+- Fixed empty data transmission issues
+- Improved clipboard data handling reliability
+
+### Added
+- Better connection identification (data vs. control connections)
+- Improved debug logging
+- Retry logic for clipboard operations
+- Maximum data size enforcement
+- Connection timeouts and deadlines
+
+### Changed
+- More efficient buffered data reading
+- Enhanced error reporting
+- Simplified client stdin handling
+
 ## [2.0.0] - 2025-05-09
 
 ### Changed
