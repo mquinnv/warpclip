@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
 # warpclip - Remote-to-local clipboard integration for terminal users
+# Version 2.0.0
 # 
 # Part of the WarpClip project: https://github.com/mquinnv/warpclip
 # 
@@ -9,7 +10,7 @@
 
 set -e
 
-VERSION="1.2.1"
+VERSION="2.0.0"
 
 # Configuration - can be overridden with environment variables
 PORT="${WARPCLIP_PORT:-9999}"      # Remote port (can be customized)

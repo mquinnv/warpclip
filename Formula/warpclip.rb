@@ -1,8 +1,8 @@
 class Warpclip < Formula
   desc "Remote-to-local clipboard integration for terminal users"
   homepage "https://github.com/mquinnv/warpclip"
-  url "https://github.com/mquinnv/warpclip/archive/refs/tags/v1.2.1.tar.gz"
-  sha256 "db9e5d7d107a219bca8d837058340d83eae48e796b9008f318bc30f784716f66"
+  url "https://github.com/mquinnv/warpclip/archive/refs/tags/v2.0.0.tar.gz"
+  # sha256 will be updated after release
   license "MIT"
   head "https://github.com/mquinnv/warpclip.git", branch: "main"
 
@@ -12,25 +12,17 @@ class Warpclip < Formula
   end
 
   depends_on :macos
-  depends_on "netcat"
+  depends_on "go" => :build
 
   def install
+    # Build the Go server daemon
+    cd "cmd/warpclipd" do
+      system "go", "build", "-o", bin/"warpclipd", 
+             "-ldflags", "-X main.Version=#{version}"
+    end
+
     # Install the main command-line tool
     bin.install "bin/warpclip"
-
-    # Install the server daemon
-    bin.install "src/warpclipd"
-    
-    # Update version and ensure proper localhost binding
-    inreplace bin/"warpclipd" do |s|
-      s.gsub!(/^VERSION=.*$/, %Q(VERSION="#{version}"))
-      
-      # Update version and binding address
-      
-      # Ensure consistent port configuration
-      s.gsub!(/^PORT=.*$/, 'PORT="8888"')
-      s.gsub!(/^BIND_ADDRESS=.*$/, 'BIND_ADDRESS="127.0.0.1"')
-    end
     
     # Set the proper permissions
     chmod 0755, bin/"warpclip"
@@ -213,7 +205,8 @@ Host *
       1. LOCAL COMPONENT (warpclipd):
          • Runs on your Mac and listens for clipboard data
          • Started automatically by Homebrew Services
-
+         • Now implemented in Go for improved security and reliability
+         
       2. REMOTE COMPONENT (warpclip):
          • Needs to be installed on remote servers you connect to
          • Sends data back to your Mac through SSH tunnel
@@ -267,8 +260,10 @@ Host *
     rescue
       nil
     end
-    # Check if the scripts have expected content
+    # Check if warpclip script has expected content
     assert_match "WarpClip v#{version}", shell_output("#{opt_bin}/warpclip --version")
-    assert_match "warpclipd - WarpClip clipboard daemon", shell_output("head -n 10 #{opt_bin}/warpclipd")
+    
+    # For Go binary, just check it exists and runs
+    system opt_bin/"warpclipd", "--help"
   end
 end
