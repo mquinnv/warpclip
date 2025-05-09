@@ -1,8 +1,8 @@
 class Warpclip < Formula
-  desc "Remote-to-local clipboard integration for Warp terminal users"
+  desc "Remote-to-local clipboard integration for terminal users"
   homepage "https://github.com/mquinnv/warpclip"
-  url "https://github.com/mquinnv/warpclip/archive/refs/tags/v1.0.1.tar.gz"
-  sha256 "428467b2ae00561ea6319ab178fa739b8b4d6cd3f21328e9313288c8d01c75b7"
+  url "https://github.com/mquinnv/warpclip/archive/refs/tags/v1.1.0.tar.gz"
+  sha256 "REPLACE_WITH_ACTUAL_SHA256_AFTER_RELEASE"
   license "MIT"
   head "https://github.com/mquinnv/warpclip.git", branch: "main"
 
@@ -15,13 +15,18 @@ class Warpclip < Formula
   end
 
   def install
-    # Install the binaries
-    bin.install "src/warpclip-server.sh"
-    bin.install "src/warp-copy"
+    # Install the main command-line tool
+    bin.install "bin/warpclip"
+    
+    # Install the server daemon (renaming it for clarity)
+    bin.install "src/warpclip-server.sh" => "warpclipd"
 
     # Set the proper permissions
-    chmod 0755, bin/"warpclip-server.sh"
-    chmod 0755, bin/"warp-copy"
+    chmod 0755, bin/"warpclip"
+    chmod 0755, bin/"warpclipd"
+
+    # For backward compatibility, create a symlink for warp-copy
+    bin.install_symlink bin/"warpclip" => "warp-copy"
 
     # Install example files to share directory
     share.install "etc/com.user.warpclip.plist"
@@ -91,7 +96,7 @@ Host *
 
   # Define the service plist
   service do
-    run [opt_bin/"warpclip-server.sh"]
+    run [opt_bin/"warpclipd"]
     keep_alive true
     log_path "#{Dir.home}/.warpclip.out.log"
     error_log_path "#{Dir.home}/.warpclip.error.log"
@@ -104,42 +109,50 @@ Host *
 
   def caveats
     <<~EOS
-      WarpClip has been installed. To start the service:
+      WarpClip has been installed. To start the clipboard service:
       
         brew services start warpclip
       
       IMPORTANT: WarpClip consists of two components:
       
-      1. LOCAL COMPONENT (warpclip-server.sh):
+      1. LOCAL COMPONENT (warpclipd):
          • Runs on your Mac and listens for clipboard data
          • Started automatically by Homebrew Services
       
-      2. REMOTE COMPONENT (warp-copy):
-         • Needs to be copied to remote servers you connect to
+      2. REMOTE COMPONENT (warpclip):
+         • Needs to be installed on remote servers you connect to
          • Sends data back to your Mac through SSH tunnel
       
       To use WarpClip on a remote server:
       
-      1. Copy the client script to your remote server:
-         scp #{opt_bin}/warp-copy user@remote-server:~/bin/
+      1. Install the client script on your remote server:
+         #{opt_bin}/warpclip install-remote user@remote-server
       
-      2. Make it executable:
-         ssh user@remote-server "chmod +x ~/bin/warp-copy"
-      
-      3. Connect to your remote server with SSH forwarding:
+      2. Connect to your remote server with SSH forwarding:
          ssh user@remote-server
          (This works automatically if you use the default SSH config)
       
-      4. On the remote server, pipe content to warp-copy:
-         cat remote-file.txt | warp-copy
+      3. On the remote server, pipe content to warpclip:
+         cat remote-file.txt | warpclip
       
       The content will be copied to your local Mac clipboard!
+      
+      Available commands:
+      
+      • Copy data to clipboard (on remote server):
+        cat file.txt | warpclip
+      
+      • Install on a remote server (from local machine):
+        warpclip install-remote user@remote-server
+      
+      • Show help and usage information:
+        warpclip help
       
       Status and troubleshooting:
       
       • Check service status:
         brew services info warpclip
-        #{opt_bin}/warpclip-server.sh status
+        #{opt_bin}/warpclipd status
         
       • View logs:
         cat ~/.warpclip.log
@@ -149,16 +162,23 @@ Host *
         brew services restart warpclip
     EOS
   end
+        brew services restart warpclip
+    EOS
+  end
 
   test do
-    assert_predicate opt_bin/"warpclip-server.sh", :exist?
-    assert_predicate opt_bin/"warp-copy", :exist?
+    assert_predicate opt_bin/"warpclipd", :exist?
+    assert_predicate opt_bin/"warpclip", :exist?
     
-    # Basic syntax check
-    system opt_bin/"warpclip-server.sh", "status" rescue nil
+    # Basic syntax check for warpclip
+    system opt_bin/"warpclip", "--version"
     
-    # Check if the script has expected content
-    assert_match "warpclip server", shell_output("head -n 5 #{opt_bin}/warpclip-server.sh")
+    # Basic syntax check for warpclipd
+    system opt_bin/"warpclipd", "status" rescue nil
+    
+    # Check if the scripts have expected content
+    assert_match "WarpClip v#{version}", shell_output("#{opt_bin}/warpclip --version")
+    assert_match "warpclip server", shell_output("head -n 10 #{opt_bin}/warpclipd")
   end
 end
 
