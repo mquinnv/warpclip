@@ -162,9 +162,6 @@ Host *
         brew services restart warpclip
     EOS
   end
-        brew services restart warpclip
-    EOS
-  end
 
   test do
     assert_predicate opt_bin/"warpclipd", :exist?
