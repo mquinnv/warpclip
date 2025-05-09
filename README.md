@@ -5,8 +5,8 @@
 [![Version](https://img.shields.io/badge/version-2.1.3-blue.svg)](https://github.com/mquinnv/warpclip/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
-[![Homebrew](https://img.shields.io/badge/homebrew-coming%20soon-orange.svg)]()
-[![Release Status](https://img.shields.io/github/workflow/status/mquinnv/warpclip/release?label=release)]()
+[![Homebrew](https://img.shields.io/badge/homebrew-ready-green.svg)]()
+[![Release Status](https://img.shields.io/github/release/mquinnv/warpclip.svg?label=release)](https://github.com/mquinnv/warpclip/releases)
 
 **Remote-to-local clipboard integration for Warp terminal users**
 
