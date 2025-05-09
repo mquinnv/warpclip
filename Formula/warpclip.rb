@@ -2,10 +2,7 @@ class Warpclip < Formula
   desc "Remote-to-local clipboard integration for terminal users"
   homepage "https://github.com/mquinnv/warpclip"
   
-  # Explicitly set version
-  version "1.2.1"
-  
-  # Use explicit versioning in URL
+  # Let Homebrew extract version from the URL
   url "https://github.com/mquinnv/warpclip/archive/refs/tags/v1.2.1.tar.gz"
   sha256 "db9e5d7d107a219bca8d837058340d83eae48e796b9008f318bc30f784716f66"
   license "MIT"
