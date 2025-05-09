@@ -1,4 +1,4 @@
-# WarpClip 📋
+# WarpClip <img src="https://raw.githubusercontent.com/mquinnv/warpclip/main/assets/logo.png" alt="WarpClip" width="25" style="vertical-align: middle;"/>
 
 <div align="center">
 
