@@ -199,11 +199,12 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Checkout code
+      - name: Checkout homebrew-tap repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          ref: main
+          repository: mquinnv/homebrew-tap
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: homebrew-tap
           
       - name: Get version from tag
         id: get_version
@@ -219,25 +220,23 @@ jobs:
         
       - name: Update Homebrew Formula
         run: |
-          # Check file exists and show directory structure
-          ls -la homebrew-tap/
-          ls -la homebrew-tap/Formula/ || echo "Formula directory not found"
+          cd homebrew-tap
           
           # Update formula file
-          if [ -f "homebrew-tap/Formula/warpclip.rb" ]; then
-            sed -i '' "s|url \".*\"|url \"https://github.com/mquinnv/warpclip/archive/refs/tags/v${{ steps.get_version.outputs.VERSION }}.tar.gz\"|" homebrew-tap/Formula/warpclip.rb
-            sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.get_sha.outputs.SHA256 }}\"|" homebrew-tap/Formula/warpclip.rb
+          if [ -f "Formula/warpclip.rb" ]; then
+            sed -i '' "s|url \".*\"|url \"https://github.com/mquinnv/warpclip/archive/refs/tags/v${{ steps.get_version.outputs.VERSION }}.tar.gz\"|" Formula/warpclip.rb
+            sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.get_sha.outputs.SHA256 }}\"|" Formula/warpclip.rb
             
             # Configure Git
             git config --local user.email "action@github.com"
             git config --local user.name "GitHub Action"
             
             # Commit and push formula changes
-            git add homebrew-tap/Formula/warpclip.rb
-            git commit -m "Update Homebrew formula to v${{ steps.get_version.outputs.VERSION }}" || exit 0
+            git add Formula/warpclip.rb
+            git commit -m "Update warpclip to v${{ steps.get_version.outputs.VERSION }}"
             git push
           else
-            echo "Formula file not found at homebrew-tap/Formula/warpclip.rb"
+            echo "Formula file not found at Formula/warpclip.rb"
             exit 1
           fi
 
