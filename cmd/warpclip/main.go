@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	Version = "2.1.3" // Increment from previous versions
+	Version = "2.1.11" // Increment from previous versions
 	DefaultPort = 9999
 	Timeout = 5 * time.Second
 )

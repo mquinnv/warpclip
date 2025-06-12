@@ -14,7 +14,7 @@ import (
 	"github.com/mquinnv/warpclip/v2/internal/server"
 )
 
-const Version = "2.0.0"
+const Version = "2.1.11"
 
 func main() {
 	// Define the command line flags
