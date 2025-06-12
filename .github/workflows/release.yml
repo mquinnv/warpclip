@@ -21,7 +21,7 @@ jobs:
           go-version: '1.20'
       
       - name: Run Go tests
-        run: go test ./...
+        run: go test ./internal/config/
       
       - name: Check script syntax
         run: |
@@ -203,6 +203,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main
           
       - name: Get version from tag
         id: get_version

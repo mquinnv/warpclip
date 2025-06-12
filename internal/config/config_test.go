@@ -118,6 +118,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "valid config",
 			cfg: &Config{
 				Port:        8888,
+				BindAddress: "127.0.0.1",
 				MaxDataSize: 1024,
 			},
 			wantErr: false,
@@ -126,6 +127,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "port too low",
 			cfg: &Config{
 				Port:        123,
+				BindAddress: "127.0.0.1",
 				MaxDataSize: 1024,
 			},
 			wantErr: true,
@@ -134,6 +136,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "port too high",
 			cfg: &Config{
 				Port:        70000,
+				BindAddress: "127.0.0.1",
 				MaxDataSize: 1024,
 			},
 			wantErr: true,
@@ -142,6 +145,7 @@ func TestValidateConfig(t *testing.T) {
 			name: "data size too small",
 			cfg: &Config{
 				Port:        8888,
+				BindAddress: "127.0.0.1",
 				MaxDataSize: 100,
 			},
 			wantErr: true,

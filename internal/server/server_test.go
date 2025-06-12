@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mquinnv/warpclip/internal/config"
+	"github.com/mquinnv/warpclip/v2/internal/config"
 )
 
 // MockLogger is a simple test implementation of the Logger interface
