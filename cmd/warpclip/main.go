@@ -326,7 +326,7 @@ func installLinuxRemote(host string) error {
     // Find Linux binary in assets
     var downloadURL string
     for _, asset := range releaseInfo.Assets {
-        if strings.Contains(asset.Name, "linux-amd64") {
+        if asset.Name == "warpclip-linux-amd64" {
             downloadURL = asset.DownloadURL
             break
         }
@@ -448,7 +448,7 @@ func verifyBinaryChecksum(host, tmpDir, version string) (bool, error) {
     calculatedSum := strings.TrimSpace(string(calcSumCmdOutput))
     
     // Extract expected checksum from checksums file
-    grepCmd := fmt.Sprintf("grep -i linux-amd64 %s | cut -d ' ' -f 1", checksumPath)
+    grepCmd := fmt.Sprintf("grep 'warpclip-linux-amd64' %s | cut -d ' ' -f 1", checksumPath)
     expectedSumOutput, err := exec.Command("ssh", host, grepCmd).Output()
     if err != nil {
         return false, fmt.Errorf("failed to extract expected checksum: %w", err)
