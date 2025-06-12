@@ -227,18 +227,17 @@ jobs:
           if [ -f "homebrew-tap/Formula/warpclip.rb" ]; then
             sed -i '' "s|url \".*\"|url \"https://github.com/mquinnv/warpclip/archive/refs/tags/v${{ steps.get_version.outputs.VERSION }}.tar.gz\"|" homebrew-tap/Formula/warpclip.rb
             sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.get_sha.outputs.SHA256 }}\"|" homebrew-tap/Formula/warpclip.rb
-            sed -i '' "s|version \".*\"|version \"${{ steps.get_version.outputs.VERSION }}\"|" homebrew-tap/Formula/warpclip.rb
+            
+            # Configure Git
+            git config --local user.email "action@github.com"
+            git config --local user.name "GitHub Action"
+            
+            # Commit and push formula changes
+            git add homebrew-tap/Formula/warpclip.rb
+            git commit -m "Update Homebrew formula to v${{ steps.get_version.outputs.VERSION }}" || exit 0
+            git push
           else
             echo "Formula file not found at homebrew-tap/Formula/warpclip.rb"
             exit 1
           fi
-          
-          # Configure Git
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # Commit and push formula changes
-          git add homebrew-tap/Formula/warpclip.rb
-          git commit -m "Update Homebrew formula to v${{ steps.get_version.outputs.VERSION }}" || exit 0
-          git push
 
