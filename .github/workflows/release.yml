@@ -8,69 +8,144 @@ on:
 jobs:
   test:
     name: Run Tests
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+      
+      - name: Run Go tests
+        run: go test ./...
       
       - name: Check script syntax
         run: |
-          bash -n src/warpclipd
-          bash -n src/warp-copy
           bash -n install.sh
-      
-      - name: Run basic tests
-        run: |
-          chmod +x src/warpclipd
-          chmod +x src/warp-copy
-          ./src/warpclipd status || true
           
   build:
     name: Build & Release
     needs: test
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+          
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          
+          # Build warpclip client (for remote servers)
+          go build -ldflags="-s -w" -o dist/warpclip-${{ matrix.suffix }} cmd/warpclip/main.go
+          
+          # Build warpclipd daemon (only for macOS)
+          if [ "${{ matrix.goos }}" = "darwin" ]; then
+            go build -ldflags="-s -w" -o dist/warpclipd-${{ matrix.suffix }} cmd/warpclipd/main.go
+          fi
+          
+      - name: Create checksums
+        run: |
+          cd dist
+          for file in *-${{ matrix.suffix }}; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" >> checksums-${{ matrix.suffix }}.txt
+            fi
+          done
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.suffix }}
+          path: |
+            dist/*-${{ matrix.suffix }}
+            dist/checksums-${{ matrix.suffix }}.txt
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           
       - name: Get version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
           
-      - name: Create Release Archive
-        id: create_archive
+      - name: Prepare release assets
         run: |
-          # Create archive directory
           mkdir -p dist
           
-          # Create tarball
+          # Move all binaries to dist/
+          find artifacts -name "warpclip*" -type f -exec cp {} dist/ \;
+          find artifacts -name "checksums*.txt" -type f -exec cp {} dist/ \;
+          
+          # Create combined checksums file
+          cat dist/checksums-*.txt > dist/checksums.txt
+          
+          # Create source archive
           tar -czf dist/warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz \
             --exclude '.git' \
             --exclude '.github' \
             --exclude 'dist' \
+            --exclude 'artifacts' \
             .
           
-          # Calculate SHA256 hash
+          # Add source archive checksum
           cd dist
-          SHA256=$(shasum -a 256 warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz | awk '{print $1}')
-          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
-          echo "Archive SHA256: $SHA256"
+          sha256sum warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz >> checksums.txt
+          
+          ls -la
           
       - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           name: WarpClip ${{ steps.get_version.outputs.VERSION }}
           draft: false
           prerelease: false
           files: |
-            dist/warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz
+            dist/*
           body: |
             # WarpClip ${{ steps.get_version.outputs.VERSION }}
             
@@ -78,44 +153,82 @@ jobs:
             
             ## Installation
             
+            ### Homebrew (macOS)
             ```bash
-            # Install via Homebrew
             brew install mquinnv/tap/warpclip
             ```
             
-            ## SHA256 Hash
+            ### Pre-built Binaries
             
-            ```
-            ${{ steps.create_archive.outputs.SHA256 }}
-            ```
-            
-            ## Manual Installation
-            
+            **Linux (amd64)**
             ```bash
-            # Clone the repository
+            curl -L https://github.com/mquinnv/warpclip/releases/download/v${{ steps.get_version.outputs.VERSION }}/warpclip-linux-amd64 -o warpclip
+            chmod +x warpclip
+            sudo mv warpclip /usr/local/bin/
+            ```
+            
+            **macOS (Apple Silicon)**
+            ```bash
+            curl -L https://github.com/mquinnv/warpclip/releases/download/v${{ steps.get_version.outputs.VERSION }}/warpclip-darwin-arm64 -o warpclip
+            chmod +x warpclip
+            sudo mv warpclip /usr/local/bin/
+            ```
+            
+            **macOS (Intel)**
+            ```bash
+            curl -L https://github.com/mquinnv/warpclip/releases/download/v${{ steps.get_version.outputs.VERSION }}/warpclip-darwin-amd64 -o warpclip
+            chmod +x warpclip
+            sudo mv warpclip /usr/local/bin/
+            ```
+            
+            ## From Source
+            ```bash
             git clone https://github.com/mquinnv/warpclip.git
             cd warpclip
-            
-            # Run the installer
             ./install.sh
             ```
+            
+            ## Checksums
+            
+            See the `checksums.txt` file for SHA256 verification of all binaries.
 
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: create-release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+        
+      - name: Download source archive
+        run: |
+          curl -L https://github.com/mquinnv/warpclip/archive/refs/tags/v${{ steps.get_version.outputs.VERSION }}.tar.gz -o warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz
+          SHA256=$(shasum -a 256 warpclip-${{ steps.get_version.outputs.VERSION }}.tar.gz | awk '{print $1}')
+          echo "SHA256=$SHA256" >> $GITHUB_OUTPUT
+          echo "Source SHA256: $SHA256"
+        id: get_sha
+        
       - name: Update Homebrew Formula
         run: |
-          # Get the version and SHA256
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          SHA256="${{ steps.create_archive.outputs.SHA256 }}"
-          
           # Update formula file
-          sed -i '' "s|url \".*\"|url \"https://github.com/mquinnv/warpclip/archive/refs/tags/v${VERSION}.tar.gz\"|" Formula/warpclip.rb
-          sed -i '' "s|sha256 \".*\"|sha256 \"${SHA256}\"|" Formula/warpclip.rb
+          sed -i '' "s|url \".*\"|url \"https://github.com/mquinnv/warpclip/archive/refs/tags/v${{ steps.get_version.outputs.VERSION }}.tar.gz\"|" homebrew-tap/Formula/warpclip.rb
+          sed -i '' "s|sha256 \".*\"|sha256 \"${{ steps.get_sha.outputs.SHA256 }}\"|" homebrew-tap/Formula/warpclip.rb
+          sed -i '' "s|version \".*\"|version \"${{ steps.get_version.outputs.VERSION }}\"|" homebrew-tap/Formula/warpclip.rb
           
           # Configure Git
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           
           # Commit and push formula changes
-          git add Formula/warpclip.rb
-          git commit -m "Update formula to v${VERSION}"
+          git add homebrew-tap/Formula/warpclip.rb
+          git commit -m "Update Homebrew formula to v${{ steps.get_version.outputs.VERSION }}" || exit 0
           git push
 
